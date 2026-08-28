@@ -6684,8 +6684,8 @@ def _lateral_axis_z(quat: torch.Tensor) -> torch.Tensor:
     return 2.0 * (quat[:, 2] * quat[:, 3] + quat[:, 0] * quat[:, 1])
 
 
-def _head_top_down(env: ManagerBasedRlEnv, asset: Entity) -> torch.Tensor:
-    """True where the head-top axis points at the floor (dot with -z > min)."""
+def _head_top_axis_world_z(env: ManagerBasedRlEnv, asset: Entity) -> torch.Tensor:
+    """Return the world-z component of the flat head-top axis."""
     if not hasattr(env, "_roulade_head_body_id"):
         ids, _ = asset.find_bodies("jaw_soft")
         env._roulade_head_body_id = ids[0]
@@ -6693,10 +6693,16 @@ def _head_top_down(env: ManagerBasedRlEnv, asset: Entity) -> torch.Tensor:
     w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
     a, b, c = _HEAD_TOP_AXIS
     # z-component of R(q) @ axis_local
-    axis_world_z = (
-        2.0 * (x * z - w * y) * a + 2.0 * (y * z + w * x) * b + (1.0 - 2.0 * (x * x + y * y)) * c
+    return (
+        2.0 * (x * z - w * y) * a
+        + 2.0 * (y * z + w * x) * b
+        + (1.0 - 2.0 * (x * x + y * y)) * c
     )
-    return axis_world_z < -_HEAD_TOP_DOWN_MIN
+
+
+def _head_top_down(env: ManagerBasedRlEnv, asset: Entity) -> torch.Tensor:
+    """True where the head-top axis points at the floor (dot with -z > min)."""
+    return _head_top_axis_world_z(env, asset) < -_HEAD_TOP_DOWN_MIN
 
 
 def _sensor_any_contact(env: ManagerBasedRlEnv, name: str) -> torch.Tensor | None:
@@ -7186,3 +7192,558 @@ def roulade_lateral_velocity_penalty(
     """Body-frame lateral (y) linear velocity² — keeps the roll straight."""
     asset: Entity = env.scene[asset_cfg.name]
     return torch.nan_to_num(asset.data.root_link_lin_vel_b[:, 1].pow(2), nan=0.0)
+
+
+# ==============================================================================
+# Head-spin task — enter on the flat head top, yaw >= 180 deg, recover
+# ==============================================================================
+
+_HEAD_SPIN_HEAD_SENSOR = "head_ground_contact"
+_HEAD_SPIN_FEET_SENSOR = "feet_ground_contact"
+
+
+def head_spin_yaw_delta(
+    omega_world_z: torch.Tensor,
+    valid_support: torch.Tensor,
+    step_dt: float,
+    direction: float = 1.0,
+) -> torch.Tensor:
+    """Signed yaw increment counted only during valid head-only support.
+
+    Keeping the increment signed is intentional: rocking clockwise and then
+    counter-clockwise cannot accumulate a fake half turn. Only a new frontier
+    in the requested direction is paid by :func:`head_spin_progress`.
+    """
+    omega = torch.nan_to_num(omega_world_z, nan=0.0, posinf=0.0, neginf=0.0)
+    return float(direction) * omega * float(step_dt) * valid_support.float()
+
+
+def head_spin_stage_from_state(
+    head_latched: torch.Tensor,
+    max_yaw: torch.Tensor,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+) -> torch.Tensor:
+    """Encode enter/spin/recover plus direction in the existing 4D head slot."""
+    complete = max_yaw >= target_angle
+    enter = (~head_latched).float()
+    spin = (head_latched & ~complete).float()
+    recover = complete.float()
+    turn = torch.full_like(max_yaw, float(direction))
+    return torch.stack((enter, spin, recover, turn), dim=-1)
+
+
+def _head_spin_state(
+    env: ManagerBasedRlEnv,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if not hasattr(env, "_head_spin_accum"):
+        zeros = torch.zeros(env.num_envs, device=env.device)
+        env._head_spin_accum = zeros.clone()
+        env._head_spin_max = zeros.clone()
+        env._head_spin_paid = zeros.clone()
+        env._head_spin_head_latch = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_new_support = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_support_bonus_paid = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_spawned_complete = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_standing_spawn = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_last_update_step = -1
+    return env._head_spin_accum, env._head_spin_max, env._head_spin_paid
+
+
+def _head_spin_valid_support(env: ManagerBasedRlEnv, asset: Entity) -> torch.Tensor:
+    """Flat head top on terrain with neither foot touching."""
+    head = _sensor_any_contact(env, _HEAD_SPIN_HEAD_SENSOR)
+    feet = _sensor_any_contact(env, _HEAD_SPIN_FEET_SENSOR)
+    if head is None:
+        head = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    if feet is None:
+        feet = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    return head & ~feet & _head_top_down(env, asset)
+
+
+def _update_head_spin_state(
+    env: ManagerBasedRlEnv,
+    asset: Entity,
+    direction: float = 1.0,
+) -> None:
+    """Update the support latch and net supported-yaw progress once per step."""
+    _head_spin_state(env)
+    step = int(env.common_step_counter)
+    if step == env._head_spin_last_update_step:
+        return
+
+    valid_support = _head_spin_valid_support(env, asset)
+    env._head_spin_new_support = valid_support & ~env._head_spin_head_latch
+    env._head_spin_head_latch |= valid_support
+
+    delta = head_spin_yaw_delta(
+        asset.data.root_link_ang_vel_w[:, 2],
+        valid_support,
+        env.step_dt,
+        direction=direction,
+    )
+    env._head_spin_accum = env._head_spin_accum + delta
+    env._head_spin_max = torch.maximum(env._head_spin_max, env._head_spin_accum)
+    env._head_spin_last_update_step = step
+
+
+def _head_spin_completion_gate(
+    env: ManagerBasedRlEnv,
+    gate_lo: float,
+    gate_hi: float,
+) -> torch.Tensor:
+    _, max_yaw, _ = _head_spin_state(env)
+    t = torch.clamp((max_yaw - gate_lo) / max(gate_hi - gate_lo, 1e-6), 0.0, 1.0)
+    smooth = t * t * (3.0 - 2.0 * t)
+    return smooth * env._head_spin_head_latch.float()
+
+
+def reset_head_spin_state(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor | None,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    standing_prob: float = 0.25,
+    headstand_prob: float = 0.55,
+    recovery_prob: float = 0.20,
+    standing_z_range: tuple[float, float] = (0.11, 0.12),
+    standing_tilt_max: float = math.radians(5.0),
+    headstand_pitch_range: tuple[float, float] = (
+        math.radians(95.0),
+        math.radians(125.0),
+    ),
+    headstand_z_range: tuple[float, float] = (0.05, 0.085),
+    headstand_roll_max: float = math.radians(4.0),
+    initial_spin_rate_range: tuple[float, float] = (0.0, 2.0),
+    target_angle: float = math.pi,
+    max_spawn_progress: float = math.radians(160.0),
+    direction: float = 1.0,
+    tuck_overrides: Optional[dict] = None,
+    tuck_factor_range: tuple[float, float] = (0.7, 1.0),
+    joint_noise_std: float = 0.05,
+) -> None:
+    """Reverse-curriculum reset for the three head-spin stages.
+
+    Standing starts learn the entry. Headstand starts learn supported yaw from
+    different progress frontiers. Recovery starts are placed on the head with
+    the half-turn already complete, so the exit-to-feet skill is learnable from
+    the first iteration. All three use the same 61D policy observation layout.
+    """
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    if len(env_ids) == 0:
+        return
+    env_ids = env_ids.to(env.device, dtype=torch.long)
+    num = len(env_ids)
+    asset: Entity = env.scene[asset_cfg.name]
+    accum, max_yaw, paid = _head_spin_state(env)
+
+    total = standing_prob + headstand_prob + recovery_prob
+    draw = torch.rand(num, device=env.device) * max(total, 1e-6)
+    is_standing = draw < standing_prob
+    is_recovery = draw >= standing_prob + headstand_prob
+    is_head = ~is_standing
+
+    yaw = torch.rand(num, device=env.device) * 2.0 * math.pi - math.pi
+    pitch = (torch.rand(num, device=env.device) * 2.0 - 1.0) * standing_tilt_max
+    head_pitch = (
+        torch.rand(num, device=env.device)
+        * (headstand_pitch_range[1] - headstand_pitch_range[0])
+        + headstand_pitch_range[0]
+    )
+    pitch = torch.where(is_head, head_pitch, pitch)
+    roll = (torch.rand(num, device=env.device) * 2.0 - 1.0) * standing_tilt_max
+    head_roll = (torch.rand(num, device=env.device) * 2.0 - 1.0) * headstand_roll_max
+    roll = torch.where(is_head, head_roll, roll)
+
+    cy, sy = torch.cos(yaw * 0.5), torch.sin(yaw * 0.5)
+    cp, sp = torch.cos(pitch * 0.5), torch.sin(pitch * 0.5)
+    cr, sr = torch.cos(roll * 0.5), torch.sin(roll * 0.5)
+    quat = torch.stack(
+        (
+            cr * cp * cy + sr * sp * sy,
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+        ),
+        dim=1,
+    )
+
+    stand_z = torch.empty(num, device=env.device).uniform_(*standing_z_range)
+    head_z = torch.empty(num, device=env.device).uniform_(*headstand_z_range)
+    env.sim.data.qpos[env_ids, 2] = torch.where(is_head, head_z, stand_z)
+    env.sim.data.qpos[env_ids, 3:7] = quat
+    env.sim.data.qvel[env_ids, :6] = 0.0
+
+    servo_ids = _servo_joint_ids(env, asset)
+    head_env_ids = env_ids[is_head]
+    if len(head_env_ids) > 0 and tuck_overrides:
+        tuck = torch.empty(len(head_env_ids), device=env.device).uniform_(
+            *tuck_factor_range
+        )
+        for joint_idx, angle in tuck_overrides.items():
+            col = 7 + servo_ids[joint_idx]
+            home = env.sim.data.qpos[head_env_ids, col]
+            env.sim.data.qpos[head_env_ids, col] = home + tuck * (angle - home)
+    if len(head_env_ids) > 0 and joint_noise_std > 0.0:
+        cols = torch.tensor([7 + joint for joint in servo_ids], device=env.device)
+        noise = (
+            torch.randn(len(head_env_ids), len(cols), device=env.device)
+            * joint_noise_std
+        )
+        env.sim.data.qpos[head_env_ids.unsqueeze(1), cols.unsqueeze(0)] += noise
+
+    # MuJoCo free-joint angular qvel is body-frame. R(q)^T @ world_z gives the
+    # body-frame axis that produces a clean world-vertical yaw at any spawn tilt.
+    spinning = is_head & ~is_recovery
+    spin_env_ids = env_ids[spinning]
+    if len(spin_env_ids) > 0 and initial_spin_rate_range[1] > 0.0:
+        rate = torch.empty(len(spin_env_ids), device=env.device).uniform_(
+            *initial_spin_rate_range
+        )
+        q = quat[spinning]
+        w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+        world_z_body = torch.stack(
+            (
+                2.0 * (x * z - w * y),
+                2.0 * (y * z + w * x),
+                1.0 - 2.0 * (x * x + y * y),
+            ),
+            dim=1,
+        )
+        env.sim.data.qvel[spin_env_ids, 3:6] = (
+            float(direction) * rate.unsqueeze(1) * world_z_body
+        )
+
+    random_progress = torch.rand(num, device=env.device) * max_spawn_progress
+    spawn_progress = torch.where(
+        is_head & ~is_recovery,
+        random_progress,
+        torch.zeros(num, device=env.device),
+    )
+    spawn_progress = torch.where(
+        is_recovery,
+        torch.full((num,), target_angle, device=env.device),
+        spawn_progress,
+    )
+    accum[env_ids] = spawn_progress
+    max_yaw[env_ids] = spawn_progress
+    paid[env_ids] = spawn_progress
+    env._head_spin_head_latch[env_ids] = is_head
+    env._head_spin_new_support[env_ids] = False
+    env._head_spin_support_bonus_paid[env_ids] = is_head
+    env._head_spin_spawned_complete[env_ids] = is_recovery
+    env._head_spin_standing_spawn[env_ids] = is_standing
+
+
+def head_spin_stage_observation(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Four task-state values stored in the shared head-command observation slot."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    _, max_yaw, _ = _head_spin_state(env)
+    return head_spin_stage_from_state(
+        env._head_spin_head_latch,
+        max_yaw,
+        target_angle=target_angle,
+        direction=direction,
+    )
+
+
+def head_spin_support_entry(
+    env: ManagerBasedRlEnv,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """One-shot bonus for reaching valid flat-head, feet-off support."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    due = env._head_spin_new_support & ~env._head_spin_support_bonus_paid
+    env._head_spin_support_bonus_paid |= due
+    return due.float()
+
+
+def head_spin_progress(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    max_paid_rate: float = 4.0,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Pay only new net supported-yaw frontier, capped at ``target_angle``."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    _, max_yaw, paid = _head_spin_state(env)
+    new_paid = torch.clamp(max_yaw, max=target_angle)
+    delta = torch.clamp(new_paid - torch.clamp(paid, max=target_angle), min=0.0)
+    delta = torch.clamp(delta, max=max_paid_rate * env.step_dt)
+    env._head_spin_paid = torch.maximum(paid, new_paid)
+    return delta / (env.step_dt * target_angle)
+
+
+def head_spin_pivot(
+    env: ManagerBasedRlEnv,
+    rate_norm: float = 2.0,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Anti-camping support reward proportional to requested world-yaw rate."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    support = _head_spin_valid_support(env, asset).float()
+    rate = torch.clamp(
+        float(direction)
+        * torch.nan_to_num(asset.data.root_link_ang_vel_w[:, 2], nan=0.0)
+        / rate_norm,
+        0.0,
+        1.0,
+    )
+    return support * rate
+
+
+def head_spin_landing_composite(
+    env: ManagerBasedRlEnv,
+    target_height: float,
+    height_std: float,
+    upright_std: float,
+    pose_std: float,
+    joint_indices: list,
+    gate_lo: float = math.radians(165.0),
+    gate_hi: float = math.pi,
+    target_overrides: Optional[dict] = None,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Standing composite unlocked only after a supported half-turn."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    score = standing_composite_score(
+        env,
+        target_height=target_height,
+        height_std=height_std,
+        upright_std=upright_std,
+        pose_std=pose_std,
+        joint_indices=joint_indices,
+        target_overrides=target_overrides,
+        asset_cfg=asset_cfg,
+    )
+    return score * _head_spin_completion_gate(env, gate_lo, gate_hi)
+
+
+def head_spin_upright_after_turn(
+    env: ManagerBasedRlEnv,
+    gate_lo: float = math.radians(165.0),
+    gate_hi: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    quat = asset.data.root_link_quat_w
+    upright = 1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
+    return torch.clamp(upright, min=0.0) * _head_spin_completion_gate(
+        env, gate_lo, gate_hi
+    )
+
+
+def head_spin_height_after_turn(
+    env: ManagerBasedRlEnv,
+    target_height: float,
+    std: float = 0.04,
+    gate_lo: float = math.radians(165.0),
+    gate_hi: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    score = torch.exp(-((z - target_height) / std) ** 2)
+    return score * _head_spin_completion_gate(env, gate_lo, gate_hi)
+
+
+def head_spin_landing_sharp(
+    env: ManagerBasedRlEnv,
+    target_height: float,
+    height_std: float = 0.015,
+    upright_std: float = 0.3,
+    gate_lo: float = math.radians(165.0),
+    gate_hi: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    quat = asset.data.root_link_quat_w
+    tilt_sq = 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
+    upright = torch.exp(-tilt_sq / (upright_std * upright_std))
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    height = torch.exp(-((z - target_height) / height_std) ** 2)
+    return upright * height * _head_spin_completion_gate(env, gate_lo, gate_hi)
+
+
+def head_spin_stand_tax(
+    env: ManagerBasedRlEnv,
+    target_height: float,
+    gate_lo: float = math.radians(165.0),
+    gate_hi: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Self-negating height shortfall after completion; use positive weight."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    return -torch.clamp(target_height - z, min=0.0) * _head_spin_completion_gate(
+        env, gate_lo, gate_hi
+    )
+
+
+def head_spin_rise_velocity(
+    env: ManagerBasedRlEnv,
+    max_height: float = 0.125,
+    gate_lo: float = math.radians(165.0),
+    gate_hi: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    vz = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, 2], nan=0.0)
+    rise = torch.clamp(vz, min=0.0) * (z < max_height).float()
+    return rise * _head_spin_completion_gate(env, gate_lo, gate_hi)
+
+
+def head_spin_wrong_direction_penalty(
+    env: ManagerBasedRlEnv,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Squared wrong-way yaw rate during valid head support; positive cost."""
+    asset: Entity = env.scene[asset_cfg.name]
+    supported = _head_spin_valid_support(env, asset).float()
+    omega = float(direction) * torch.nan_to_num(
+        asset.data.root_link_ang_vel_w[:, 2], nan=0.0
+    )
+    return torch.clamp(-omega, min=0.0).pow(2) * supported
+
+
+def head_spin_overspeed_penalty(
+    env: ManagerBasedRlEnv,
+    omega_max: float = 6.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Squared excess world-yaw rate while on the head; positive cost."""
+    asset: Entity = env.scene[asset_cfg.name]
+    supported = _head_spin_valid_support(env, asset).float()
+    omega = torch.nan_to_num(asset.data.root_link_ang_vel_w[:, 2], nan=0.0).abs()
+    return torch.clamp(omega - omega_max, min=0.0).pow(2) * supported
+
+
+def head_spin_planar_drift_penalty(
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Squared world-xy speed while on the head; positive cost."""
+    asset: Entity = env.scene[asset_cfg.name]
+    supported = _head_spin_valid_support(env, asset).float()
+    velocity = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, :2], nan=0.0)
+    return velocity.pow(2).sum(dim=1) * supported
+
+
+def head_spin_progress_fraction(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Current supported-yaw frontier divided by the requested turn."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    _, max_yaw, _ = _head_spin_state(env)
+    progress = torch.clamp(max_yaw / target_angle, 0.0, 1.0)
+    return torch.where(env._head_spin_spawned_complete, 0.0, progress)
+
+
+def head_spin_completion_metric(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Binary metric: a valid supported half-turn has been completed."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    _, max_yaw, _ = _head_spin_state(env)
+    earned = (
+        env._head_spin_head_latch
+        & (max_yaw >= target_angle)
+        & ~env._head_spin_spawned_complete
+    )
+    return earned.float()
+
+
+def head_spin_support_metric(
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Binary per-step metric for flat-head support with both feet clear."""
+    asset: Entity = env.scene[asset_cfg.name]
+    return _head_spin_valid_support(env, asset).float()
+
+
+def head_spin_final_stand_metric(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    min_height: float = 0.105,
+    max_tilt_deg: float = 20.0,
+    spawn_bucket: str = "any",
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Binary success metric: turn complete and robot upright on its feet."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    _, max_yaw, _ = _head_spin_state(env)
+    complete = env._head_spin_head_latch & (max_yaw >= target_angle)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    )
+    quat = asset.data.root_link_quat_w
+    cos_tilt = 1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
+    feet = _sensor_any_contact(env, _HEAD_SPIN_FEET_SENSOR)
+    if feet is None:
+        feet = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    standing = (z >= min_height) & (
+        cos_tilt >= math.cos(math.radians(max_tilt_deg))
+    )
+    success = complete & standing & feet
+    if spawn_bucket == "standing":
+        success &= env._head_spin_standing_spawn
+    elif spawn_bucket == "recovery":
+        success &= env._head_spin_spawned_complete
+    elif spawn_bucket != "any":
+        raise ValueError(f"Unknown head-spin spawn bucket: {spawn_bucket}")
+    return success.float()
