@@ -7801,6 +7801,8 @@ def head_spin_stability_score(
     target_height: float,
     target_angle: float = math.pi,
     direction: float = 1.0,
+    linear_speed_scale: float = _HEAD_SPIN_STAND_MAX_LINEAR_SPEED,
+    angular_speed_scale: float = _HEAD_SPIN_STAND_MAX_ANGULAR_SPEED,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     """Dense post-turn annuity aligned with the strict stable-hold success."""
@@ -7833,6 +7835,8 @@ def head_spin_stability_score(
         linear_speed=linear_speed,
         angular_speed=angular_speed,
         target_height=target_height,
+        linear_speed_scale=linear_speed_scale,
+        angular_speed_scale=angular_speed_scale,
     )
     return score * _head_spin_complete(env, target_angle).float()
 
@@ -7984,15 +7988,32 @@ def head_spin_overspeed_penalty(
     return torch.clamp(omega - omega_max, min=0.0).pow(2) * supported
 
 
+def head_spin_planar_motion_cost_from_components(
+    planar_velocity: torch.Tensor,
+    complete: torch.Tensor,
+    post_turn_scale: float = 4.0,
+) -> torch.Tensor:
+    """Squared planar speed, weighted more strongly after turn completion."""
+    velocity = torch.nan_to_num(planar_velocity, nan=0.0, posinf=0.0, neginf=0.0)
+    phase_scale = 1.0 + (float(post_turn_scale) - 1.0) * complete.float()
+    return velocity.pow(2).sum(dim=1) * phase_scale
+
+
 def head_spin_planar_drift_penalty(
     env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    post_turn_scale: float = 4.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-    """Squared world-xy speed while on the head; positive cost."""
+    """Squared world-xy speed throughout the maneuver; positive cost."""
     asset: Entity = env.scene[asset_cfg.name]
-    supported = _head_spin_valid_support(env, asset).float()
-    velocity = torch.nan_to_num(asset.data.root_link_lin_vel_w[:, :2], nan=0.0)
-    return velocity.pow(2).sum(dim=1) * supported
+    _update_head_spin_state(env, asset, direction=direction)
+    return head_spin_planar_motion_cost_from_components(
+        asset.data.root_link_lin_vel_w[:, :2],
+        complete=_head_spin_complete(env, target_angle),
+        post_turn_scale=post_turn_scale,
+    )
 
 
 def head_spin_progress_fraction(

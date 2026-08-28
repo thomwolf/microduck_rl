@@ -34,8 +34,8 @@ claims about the current policy.
 | `headspin-rv2-smoke-t4` | `6a91f31b984507d9db4ea655` | Reward-v2 train/eval/export/upload smoke | Completed | <= $0.10 |
 | `headspin-rv2-seed42-stage1` | `6a91f596984507d9db4ea699` | Reward-v2 baseline through checkpoint 500 | Canceled after recovery stalled | <= $0.55 |
 | `headspin-rv3-seed42-recovery` | `6a91fe94984507d9db4ea75d` | Checkpoint-500 recovery-focused warm start | Canceled after checkpoint 750 was evaluated | <= $0.40 |
-| `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Running; 2 h hard timeout | <= $1.20 exposure |
-| **Completed/canceled cumulative estimate** | | | | **$1.15** |
+| `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Completed at checkpoint 1249 | <= $0.35 |
+| **Completed/canceled cumulative estimate** | | | | **$1.50** |
 
 ## Experiment 0: pipeline smoke
 
@@ -134,3 +134,27 @@ development gates. The remaining early-headstand gate is narrowly missed
 Evaluate checkpoint 1250 before changing the reward; if drift persists, extend
 the velocity penalty beyond head-only support rather than expecting a policy
 without global-position observations to correct absolute displacement.
+
+The final zero-based checkpoint 1249 achieved 100% strict stable success in all
+five 256-episode buckets in the job's held-out evaluation (seed 20260828). A
+second local 256-episode standing evaluation on seed 35042 also achieved 100%,
+with no timeouts or missed criteria. This promotes reward-v4 as the immutable
+success fallback. Standing p95 drift was 0.303 m and 0.302 m respectively,
+however, and the headstand buckets drifted 0.507--0.741 m, so it does not pass
+the final compactness gate.
+
+## Experiment 4: compactness polish
+
+Warm-start checkpoint 1249 without changing the 180-degree task gate, strict
+success predicates, observations, or spawn curriculum. Make three targeted
+changes based on the residual-motion evidence:
+
+- set the dense stillness scales to the actual strict limits (0.15 m/s linear
+  and 1.0 rad/s angular) and raise its weight from 4 to 6;
+- raise the post-turn yaw-brake penalty from -0.1 to -0.25;
+- apply squared planar-speed cost throughout the maneuver rather than only on
+  valid head support, with a 4x multiplier after turn completion.
+
+Checkpoint 1249 remains the fallback. Promote a polish checkpoint only if it
+retains 100% development success while reducing standing p95 drift; reject it
+immediately if strict success regresses materially.

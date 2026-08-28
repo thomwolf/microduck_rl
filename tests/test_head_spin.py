@@ -95,6 +95,25 @@ def test_stability_score_is_maximal_only_for_a_quiet_complete_stand():
     assert 0.2 < moving.item() < perfect.item()
 
 
+def test_compactness_cost_applies_in_every_phase_and_is_stronger_after_turn():
+    velocity = torch.tensor([[0.3, 0.4], [0.3, 0.4]])
+    cost = mdp.head_spin_planar_motion_cost_from_components(
+        velocity,
+        complete=torch.tensor([False, True]),
+        post_turn_scale=4.0,
+    )
+    assert torch.allclose(cost, torch.tensor([0.25, 1.0]))
+
+
+def test_cfg_polish_scales_match_strict_stability_thresholds():
+    cfg = make_microduck_head_spin_env_cfg()
+    stability = cfg.rewards["head_spin_stability_score"]
+    drift = cfg.rewards["head_spin_planar_drift"]
+    assert stability.params["linear_speed_scale"] == 0.15
+    assert stability.params["angular_speed_scale"] == 1.0
+    assert drift.params["post_turn_scale"] > 1.0
+
+
 def test_hard_completion_gate_does_not_leak_before_pi():
     env = SimpleNamespace(
         _head_spin_accum=torch.tensor([math.radians(179.0), math.pi]),
