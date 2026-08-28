@@ -181,6 +181,11 @@ def _wandb_api_key() -> str | None:
     return None
 
 
+def _wandb_job_env(disabled: bool) -> dict[str, str]:
+    """Return environment variables that control W&B inside the remote job."""
+    return {"WANDB_MODE": "disabled"} if disabled else {}
+
+
 def _repo_root() -> Path:
     """Repo root of the CURRENT directory — worktree-aware.
 
@@ -338,7 +343,7 @@ def submit(argv: list[str]) -> int:
     )
     ap.add_argument(
         "--no-wandb", action="store_true",
-        help="Do not forward a wandb API key (training will fail if wandb is enabled).",
+        help="Disable W&B logging and do not forward an API key.",
     )
     args, train_args = ap.parse_known_args(argv)
 
@@ -368,7 +373,13 @@ def submit(argv: list[str]) -> int:
     secrets: dict[str, str] = {"HF_TOKEN": token}
 
     # Forward wandb credentials (env var, then ~/.netrc)
-    if not args.no_wandb:
+    if args.no_wandb:
+        # Merely withholding WANDB_API_KEY still makes wandb prompt for login in
+        # the non-interactive container. Disabled mode keeps its API compatible
+        # while preventing all remote logging and authentication attempts.
+        env.update(_wandb_job_env(disabled=True))
+        print("[wandb] disabled")
+    else:
         wb_key = _wandb_api_key()
         if not wb_key:
             print(
