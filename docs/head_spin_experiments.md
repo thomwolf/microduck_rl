@@ -33,7 +33,7 @@ claims about the current policy.
 | `headspin-rv2-smoke` | `6a91ef23984507d9db4ea5c4` | Reward-v2 L4 pipeline smoke | Canceled while queued; no runtime | $0.00 |
 | `headspin-rv2-smoke-t4` | `6a91f31b984507d9db4ea655` | Reward-v2 train/eval/export/upload smoke | Completed | <= $0.10 |
 | `headspin-rv2-seed42-stage1` | `6a91f596984507d9db4ea699` | Reward-v2 baseline through checkpoint 500 | Canceled after recovery stalled | <= $0.55 |
-| `headspin-rv3-seed42-recovery` | `6a91fe94984507d9db4ea75d` | Checkpoint-500 recovery-focused warm start | Running; 2 h hard timeout | <= $1.20 exposure |
+| `headspin-rv3-seed42-recovery` | `6a91fe94984507d9db4ea75d` | Checkpoint-500 recovery-focused warm start | Canceled after checkpoint 750 was evaluated | <= $0.40 |
 | `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Running; 2 h hard timeout | <= $1.20 exposure |
 | **Completed/canceled cumulative estimate** | | | | **$1.15** |
 
@@ -122,3 +122,15 @@ HF job: `6a920658984507d9db4ea83f`. The bootstrap explicitly loaded Experiment 2
 `model_750.pt`; training resumed at iteration 750/1250 with the new stability
 score present in the live reward table. Experiment 2 was then canceled. Its
 conservative runtime estimate is <= $0.40.
+
+Checkpoint 1000 was evaluated locally on the same held-out seed 25042 with 64
+episodes per bucket. Stable-success rates were 95.31% from standing, 42.19%
+from 0-degree head support, 84.38% from 90 degrees, 90.63% from 160 degrees,
+and 100% from turn-complete recovery. Every bucket retained 100% entry; turn
+completion was 95.31% from 0 degrees and 100% elsewhere. This is the first
+checkpoint to solve the strict 0.4-second stable hold and passes four of five
+development gates. The remaining early-headstand gate is narrowly missed
+(42.19% versus 50%), and p95 planar drift remains too high at 0.276--0.674 m.
+Evaluate checkpoint 1250 before changing the reward; if drift persists, extend
+the velocity penalty beyond head-only support rather than expecting a policy
+without global-position observations to correct absolute displacement.
