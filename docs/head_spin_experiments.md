@@ -32,7 +32,9 @@ claims about the current policy.
 | `headspin-smoke-v2` | `6a91e27745686a1580c12779` | Corrected 5-iteration smoke | Completed | <= $0.05 |
 | `headspin-rv2-smoke` | `6a91ef23984507d9db4ea5c4` | Reward-v2 L4 pipeline smoke | Canceled while queued; no runtime | $0.00 |
 | `headspin-rv2-smoke-t4` | `6a91f31b984507d9db4ea655` | Reward-v2 train/eval/export/upload smoke | Completed | <= $0.10 |
-| **Cumulative conservative estimate** | | | | **$0.20** |
+| `headspin-rv2-seed42-stage1` | `6a91f596984507d9db4ea699` | Reward-v2 baseline through checkpoint 500 | Canceled after recovery stalled | <= $0.55 |
+| `headspin-rv3-seed42-recovery` | `6a91fe94984507d9db4ea75d` | Checkpoint-500 recovery-focused warm start | Running; 2 h hard timeout | <= $1.20 exposure |
+| **Completed/canceled cumulative estimate** | | | | **$0.75** |
 
 ## Experiment 0: pipeline smoke
 
@@ -59,7 +61,7 @@ changes are selected from the failed evaluation bucket rather than total reward.
 - HF job: `6a91f596984507d9db4ea699`
 - Model repo: `pollen-robotics/headspin-rv2-seed42-stage1`
 - Training: 2,048 environments, 3,000 iterations, seed 42, T4 medium
-- Status: running
+- Status: canceled after checkpoint 500; superseded by Experiment 2
 
 Checkpoint 250 was evaluated locally with 64 held-out episodes per bucket
 (seed 25042). Entry and turn completion were 100% in every spin bucket,
@@ -88,3 +90,8 @@ only task change is the spawn schedule: 10/20/70 standing/headstand/recovery at
 the first stage, then 20/30/50, 40/35/25, and finally 60/30/10 as later stages
 are crossed. Promote only if recovery stable success rises materially without
 losing the already-solved entry and 180-degree turn.
+
+HF job: `6a91fe94984507d9db4ea75d`. The bootstrap explicitly staged and loaded
+`model_500.pt`; the first logged learning iteration was 500/1500 and the live
+spawn mix was 10/20/70 as intended. Experiment 1 was canceled only after this
+load was confirmed.
