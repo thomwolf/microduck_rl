@@ -70,3 +70,21 @@ buckets were worse. This localizes the next learning problem to braking and
 recovery, while the nonzero recovery success proves the strict terminal state
 is reachable. Keep the baseline unchanged through checkpoint 500 before
 deciding whether to rebalance the spawn curriculum.
+
+Checkpoint 500 was evaluated with the identical 64 episodes per bucket and
+seed 25042. Entry and turn completion remained 100%, but stable success was
+0% in every bucket, including recovery. Standing p95 yaw rate regressed from
+8.14 to 9.25 rad/s and drift from 0.216 to 0.259 m. This rejects the hypothesis
+that the original 20% recovery sampling was producing reliable recovery by
+iteration 500. Stop the baseline and warm-start checkpoint 500 with reward
+weights unchanged but a 10% standing / 20% headstand / 70% recovery spawn mix.
+That isolates curriculum allocation as the next experimental variable.
+
+## Experiment 2: checkpoint-500 recovery focus
+
+Warm-start `model_500.pt` from Experiment 1, preserve PPO optimizer and
+observation normalizer state, and train for 1,000 additional iterations. The
+only task change is the spawn schedule: 10/20/70 standing/headstand/recovery at
+the first stage, then 20/30/50, 40/35/25, and finally 60/30/10 as later stages
+are crossed. Promote only if recovery stable success rises materially without
+losing the already-solved entry and 180-degree turn.

@@ -116,6 +116,37 @@ uv sync --no-progress || {
     uv sync --no-progress
 }
 
+# Optional warm start from a checkpoint already uploaded to the Hub.  mjlab's
+# trainer resolves local checkpoints below logs/rsl_rl/<experiment>/<run>, so
+# stage the file there and append the standard resume flags to TRAIN_ARGS.
+if [ -n "${RESUME_REPO:-}" ]; then
+    RESUME_NAME=$(basename "$RESUME_FILE")
+    RESUME_DIR="logs/rsl_rl/$RESUME_EXPERIMENT/hf_resume"
+    mkdir -p "$RESUME_DIR"
+    echo "[bootstrap] downloading resume checkpoint $RESUME_REPO/$RESUME_FILE"
+    uv run python - <<'PY'
+import os
+import shutil
+
+from huggingface_hub import hf_hub_download
+
+source = hf_hub_download(
+    repo_id=os.environ["RESUME_REPO"],
+    filename=os.environ["RESUME_FILE"],
+)
+destination = os.path.join(
+    "logs",
+    "rsl_rl",
+    os.environ["RESUME_EXPERIMENT"],
+    "hf_resume",
+    os.path.basename(os.environ["RESUME_FILE"]),
+)
+shutil.copy2(source, destination)
+print(f"[bootstrap] resume checkpoint -> {destination}")
+PY
+    TRAIN_ARGS="$TRAIN_ARGS --agent.resume True --agent.load-run hf_resume --agent.load-checkpoint $RESUME_NAME"
+fi
+
 echo "[bootstrap] launching checkpoint uploader"
 mkdir -p logs/rsl_rl
 nohup uv run python scripts/hf/uploader.py > /tmp/uploader.log 2>&1 &
@@ -352,6 +383,21 @@ def submit(argv: list[str]) -> int:
         help="HF model repo for checkpoints. Defaults to <namespace>/<run-name>",
     )
     ap.add_argument(
+        "--resume-repo",
+        default=None,
+        help="HF model repo containing a checkpoint used to warm-start training.",
+    )
+    ap.add_argument(
+        "--resume-file",
+        default=None,
+        help="Path in --resume-repo of the checkpoint to load.",
+    )
+    ap.add_argument(
+        "--resume-experiment",
+        default=None,
+        help="mjlab experiment_name used to stage the resume checkpoint.",
+    )
+    ap.add_argument(
         "--uv-cache-bucket",
         default=None,
         help="HF bucket used as UV_CACHE_DIR to persist wheels across runs. "
@@ -398,6 +444,22 @@ def submit(argv: list[str]) -> int:
         "CKPT_REPO": ckpt_repo,
         "TRAIN_ARGS": " ".join(shlex.quote(a) for a in [args.task, *train_args]),
     }
+    resume_values = (args.resume_repo, args.resume_file, args.resume_experiment)
+    if any(resume_values) and not all(resume_values):
+        print(
+            "error: --resume-repo, --resume-file, and --resume-experiment "
+            "must be provided together.",
+            file=sys.stderr,
+        )
+        return 1
+    if all(resume_values):
+        env.update(
+            {
+                "RESUME_REPO": args.resume_repo,
+                "RESUME_FILE": args.resume_file,
+                "RESUME_EXPERIMENT": args.resume_experiment,
+            }
+        )
     secrets: dict[str, str] = {"HF_TOKEN": token}
 
     # Forward wandb credentials (env var, then ~/.netrc)

@@ -162,9 +162,9 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
 
     cfg.events.pop("set_roulade_state", None)
     reset_params = {
-        "standing_prob": 1.0 if play else 0.25,
-        "headstand_prob": 0.0 if play else 0.55,
-        "recovery_prob": 0.0 if play else 0.20,
+        "standing_prob": 1.0 if play else 0.10,
+        "headstand_prob": 0.0 if play else 0.20,
+        "recovery_prob": 0.0 if play else 0.70,
         "standing_z_range": (0.11, 0.12),
         "standing_tilt_max": math.radians(5.0),
         "headstand_pitch_range": (math.radians(95.0), math.radians(125.0)),
@@ -194,21 +194,29 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
                     {
                         "step": 0,
                         "params": {
-                            "standing_prob": 0.25,
-                            "headstand_prob": 0.55,
-                            "recovery_prob": 0.20,
+                            "standing_prob": 0.10,
+                            "headstand_prob": 0.20,
+                            "recovery_prob": 0.70,
+                        },
+                    },
+                    {
+                        "step": 1000 * 24,
+                        "params": {
+                            "standing_prob": 0.20,
+                            "headstand_prob": 0.30,
+                            "recovery_prob": 0.50,
+                        },
+                    },
+                    {
+                        "step": 2000 * 24,
+                        "params": {
+                            "standing_prob": 0.40,
+                            "headstand_prob": 0.35,
+                            "recovery_prob": 0.25,
                         },
                     },
                     {
                         "step": 3000 * 24,
-                        "params": {
-                            "standing_prob": 0.40,
-                            "headstand_prob": 0.45,
-                            "recovery_prob": 0.15,
-                        },
-                    },
-                    {
-                        "step": 6000 * 24,
                         "params": {
                             "standing_prob": 0.60,
                             "headstand_prob": 0.30,
