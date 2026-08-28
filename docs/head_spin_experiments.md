@@ -38,8 +38,8 @@ claims about the current policy.
 | `headspin-rv5-seed42-compact` | `6a920f7a984507d9db4ea95b` | Compactness polish submission | Failed before training: obsolete seed flag | <= $0.05 |
 | `headspin-rv5b-seed42-compact` | `6a921022984507d9db4ea973` | Corrected checkpoint-1249 compactness polish | Completed at checkpoint 1498 | <= $0.20 |
 | `headspin-rv6-seed42-support-compact` | `6a92157645686a1580c1312f` | Checkpoint-1498 supported-spin compactness | Completed at checkpoint 1747 | <= $0.20 |
-| `headspin-rv6b-seed42-support-compact` | `6a9219f4984507d9db4eaa9c` | Unchanged checkpoint-1747 continuation | Running; 1 h hard timeout | <= $0.60 exposure |
-| **Completed/canceled cumulative estimate** | | | | **$1.95** |
+| `headspin-rv6b-seed42-support-compact` | `6a9219f4984507d9db4eaa9c` | Unchanged checkpoint-1747 continuation | Completed at checkpoint 1996 | <= $0.20 |
+| **Completed/canceled cumulative estimate** | | | | **$2.15** |
 
 ## Experiment 0: pipeline smoke
 
@@ -205,3 +205,17 @@ Continue the same reward unchanged for another 250 updates to measure whether
 the compactness learning curve is still improving before changing the weight.
 Job `6a9219f4984507d9db4eaa9c` explicitly loaded `model_1747.pt` and resumed at
 iteration 1747/1997 with the same source configuration and no NaN terminations.
+
+Checkpoint 1996 retained 100% strict success in every official 256-episode
+bucket and improved standing p95 drift to 0.245 m, with 0.173 m at turn
+completion. Seed 35042 reproduced 100% success, 0.246 m final p95, and 0.175 m
+at turn completion. The unchanged learning curve is still improving but more
+slowly than the first supported-penalty stage.
+
+## Experiment 6: stronger supported and recovery compactness
+
+Warm-start checkpoint 1996 and double the supported-spin and post-turn planar
+speed multipliers from 4x to 8x. Keep the entry multiplier at 1x and preserve
+every other reward, reset, observation, termination, and task-gate setting.
+This is the next controlled dose on the replicated compactness intervention.
+Promote only if 100% success is preserved and p95 standing drift improves.

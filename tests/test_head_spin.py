@@ -113,8 +113,8 @@ def test_cfg_polish_scales_match_strict_stability_thresholds():
     drift = cfg.rewards["head_spin_planar_drift"]
     assert stability.params["linear_speed_scale"] == 0.15
     assert stability.params["angular_speed_scale"] == 1.0
-    assert drift.params["supported_scale"] > 1.0
-    assert drift.params["post_turn_scale"] > 1.0
+    assert drift.params["supported_scale"] == 8.0
+    assert drift.params["post_turn_scale"] == 8.0
 
 
 def test_hard_completion_gate_does_not_leak_before_pi():

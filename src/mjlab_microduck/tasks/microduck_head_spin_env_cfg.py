@@ -129,8 +129,8 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
         params={
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "direction": HEAD_SPIN_DIRECTION,
-            "supported_scale": 4.0,
-            "post_turn_scale": 4.0,
+            "supported_scale": 8.0,
+            "post_turn_scale": 8.0,
         },
     )
 
