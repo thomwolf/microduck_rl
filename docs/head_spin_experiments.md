@@ -39,6 +39,7 @@ claims about the current policy.
 | `headspin-rv5b-seed42-compact` | `6a921022984507d9db4ea973` | Corrected checkpoint-1249 compactness polish | Completed at checkpoint 1498 | <= $0.20 |
 | `headspin-rv6-seed42-support-compact` | `6a92157645686a1580c1312f` | Checkpoint-1498 supported-spin compactness | Completed at checkpoint 1747 | <= $0.20 |
 | `headspin-rv6b-seed42-support-compact` | `6a9219f4984507d9db4eaa9c` | Unchanged checkpoint-1747 continuation | Completed at checkpoint 1996 | <= $0.20 |
+| `headspin-rv7-seed42-strong-compact` | `6a921ecd45686a1580c132b6` | Checkpoint-1996 8x compactness | Running; 1 h hard timeout | <= $0.60 exposure |
 | **Completed/canceled cumulative estimate** | | | | **$2.15** |
 
 ## Experiment 0: pipeline smoke
@@ -219,3 +220,7 @@ speed multipliers from 4x to 8x. Keep the entry multiplier at 1x and preserve
 every other reward, reset, observation, termination, and task-gate setting.
 This is the next controlled dose on the replicated compactness intervention.
 Promote only if 100% success is preserved and p95 standing drift improves.
+
+HF job `6a921ecd45686a1580c132b6` uses source commit `ed09185`. It explicitly
+loaded `model_1996.pt`, resumed at iteration 1996/2246 with 2,048 environments,
+and showed finite rewards and no NaN terminations during initialization.
