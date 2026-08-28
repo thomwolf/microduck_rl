@@ -53,3 +53,20 @@ judge the task design.
 
 The first training experiment should test this reward unchanged. Subsequent
 changes are selected from the failed evaluation bucket rather than total reward.
+
+## Experiment 1: reward-v2 seed 42, stage 1
+
+- HF job: `6a91f596984507d9db4ea699`
+- Model repo: `pollen-robotics/headspin-rv2-seed42-stage1`
+- Training: 2,048 environments, 3,000 iterations, seed 42, T4 medium
+- Status: running
+
+Checkpoint 250 was evaluated locally with 64 held-out episodes per bucket
+(seed 25042). Entry and turn completion were 100% in every spin bucket,
+including 100% full entry-plus-turn from standing. Stable success was 0% in
+the four turn buckets and 1/64 (1.5625%) in the recovery bucket. The standing
+bucket had p95 yaw rate 8.14 rad/s and p95 drift 0.216 m; the isolated spin
+buckets were worse. This localizes the next learning problem to braking and
+recovery, while the nonzero recovery success proves the strict terminal state
+is reachable. Keep the baseline unchanged through checkpoint 500 before
+deciding whether to rebalance the spawn curriculum.
