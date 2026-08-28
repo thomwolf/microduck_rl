@@ -30,7 +30,9 @@ claims about the current policy.
 |---|---|---|---|---:|
 | `headspin-smoke` | `6a91e04a45686a1580c1271a` | Initial pipeline smoke | Failed at W&B login | <= $0.05 |
 | `headspin-smoke-v2` | `6a91e27745686a1580c12779` | Corrected 5-iteration smoke | Completed | <= $0.05 |
-| **Cumulative conservative estimate** | | | | **$0.10** |
+| `headspin-rv2-smoke` | `6a91ef23984507d9db4ea5c4` | Reward-v2 L4 pipeline smoke | Canceled while queued; no runtime | $0.00 |
+| `headspin-rv2-smoke-t4` | `6a91f31b984507d9db4ea655` | Reward-v2 train/eval/export/upload smoke | Completed | <= $0.10 |
+| **Cumulative conservative estimate** | | | | **$0.20** |
 
 ## Experiment 0: pipeline smoke
 
