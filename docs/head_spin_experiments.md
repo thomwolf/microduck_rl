@@ -37,8 +37,9 @@ claims about the current policy.
 | `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Completed at checkpoint 1249 | <= $0.35 |
 | `headspin-rv5-seed42-compact` | `6a920f7a984507d9db4ea95b` | Compactness polish submission | Failed before training: obsolete seed flag | <= $0.05 |
 | `headspin-rv5b-seed42-compact` | `6a921022984507d9db4ea973` | Corrected checkpoint-1249 compactness polish | Completed at checkpoint 1498 | <= $0.20 |
-| `headspin-rv6-seed42-support-compact` | `6a92157645686a1580c1312f` | Checkpoint-1498 supported-spin compactness | Running; 1 h hard timeout | <= $0.60 exposure |
-| **Completed/canceled cumulative estimate** | | | | **$1.75** |
+| `headspin-rv6-seed42-support-compact` | `6a92157645686a1580c1312f` | Checkpoint-1498 supported-spin compactness | Completed at checkpoint 1747 | <= $0.20 |
+| `headspin-rv6b-seed42-support-compact` | `6a9219f4984507d9db4eaa9c` | Unchanged checkpoint-1747 continuation | Running; 1 h hard timeout | <= $0.60 exposure |
+| **Completed/canceled cumulative estimate** | | | | **$1.95** |
 
 ## Experiment 0: pipeline smoke
 
@@ -193,3 +194,14 @@ turn-completion and final p95 drift improve materially.
 HF job `6a92157645686a1580c1312f` uses source commit `a59bc24`. It explicitly
 loaded `model_1498.pt` and resumed at iteration 1498/1748 with finite rewards,
 2,048 environments, agent/environment seed 42, and no NaN terminations.
+
+Checkpoint 1747 retained 100% strict success in every official 256-episode
+bucket. Standing p95 drift improved to 0.257 m, with 0.188 m accumulated by
+turn completion. A second 256-episode standing batch on seed 35042 reproduced
+100% success, 0.266 m p95 drift, and 0.191 m at turn completion. This validates
+the supported-turn intervention but still misses the 0.15 m final gate.
+
+Continue the same reward unchanged for another 250 updates to measure whether
+the compactness learning curve is still improving before changing the weight.
+Job `6a9219f4984507d9db4eaa9c` explicitly loaded `model_1747.pt` and resumed at
+iteration 1747/1997 with the same source configuration and no NaN terminations.
