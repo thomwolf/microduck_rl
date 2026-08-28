@@ -16,6 +16,9 @@ def test_summary_reports_stage_rates_and_motion_limits():
             "progress_fraction": 1.0,
             "episode_s": 3.0,
             "max_planar_drift_m": 0.02,
+            "entry_planar_drift_m": 0.01,
+            "turn_planar_drift_m": 0.015,
+            "final_planar_drift_m": 0.02,
             "peak_abs_yaw_rate_rad_s": 3.0,
             "height_criterion": True,
             "upright_criterion": True,
@@ -36,6 +39,9 @@ def test_summary_reports_stage_rates_and_motion_limits():
             "progress_fraction": 0.5,
             "episode_s": 7.0,
             "max_planar_drift_m": 0.08,
+            "entry_planar_drift_m": 0.03,
+            "turn_planar_drift_m": 0.06,
+            "final_planar_drift_m": 0.07,
             "peak_abs_yaw_rate_rad_s": 5.0,
             "height_criterion": False,
             "upright_criterion": True,
@@ -56,6 +62,9 @@ def test_summary_reports_stage_rates_and_motion_limits():
     assert summary["stable_success_rate"] == 0.5
     assert summary["mean_progress_fraction"] == 0.75
     assert summary["p95_planar_drift_m"] == 0.08
+    assert summary["p95_entry_planar_drift_m"] == 0.03
+    assert summary["p95_turn_planar_drift_m"] == 0.06
+    assert summary["p95_final_planar_drift_m"] == 0.07
     assert summary["upright_criterion_rate"] == 1.0
     assert summary["standing_pose_criterion_rate"] == 0.5
     assert summary["p95_best_stable_hold_s"] == 0.4

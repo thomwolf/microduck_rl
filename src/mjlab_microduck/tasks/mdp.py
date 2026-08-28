@@ -7990,12 +7990,18 @@ def head_spin_overspeed_penalty(
 
 def head_spin_planar_motion_cost_from_components(
     planar_velocity: torch.Tensor,
+    supported: torch.Tensor,
     complete: torch.Tensor,
+    supported_scale: float = 4.0,
     post_turn_scale: float = 4.0,
 ) -> torch.Tensor:
-    """Squared planar speed, weighted more strongly after turn completion."""
+    """Squared planar speed with phase-specific compactness weights."""
     velocity = torch.nan_to_num(planar_velocity, nan=0.0, posinf=0.0, neginf=0.0)
-    phase_scale = 1.0 + (float(post_turn_scale) - 1.0) * complete.float()
+    phase_scale = torch.where(
+        complete,
+        torch.full_like(complete, float(post_turn_scale), dtype=velocity.dtype),
+        1.0 + (float(supported_scale) - 1.0) * supported.float(),
+    )
     return velocity.pow(2).sum(dim=1) * phase_scale
 
 
@@ -8003,6 +8009,7 @@ def head_spin_planar_drift_penalty(
     env: ManagerBasedRlEnv,
     target_angle: float = math.pi,
     direction: float = 1.0,
+    supported_scale: float = 4.0,
     post_turn_scale: float = 4.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
@@ -8011,7 +8018,9 @@ def head_spin_planar_drift_penalty(
     _update_head_spin_state(env, asset, direction=direction)
     return head_spin_planar_motion_cost_from_components(
         asset.data.root_link_lin_vel_w[:, :2],
+        supported=_head_spin_valid_support(env, asset),
         complete=_head_spin_complete(env, target_angle),
+        supported_scale=supported_scale,
         post_turn_scale=post_turn_scale,
     )
 

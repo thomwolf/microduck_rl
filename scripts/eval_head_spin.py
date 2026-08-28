@@ -93,6 +93,20 @@ def _summarize(records: list[dict[str, float | bool]]) -> dict[str, float | int]
             [float(record["peak_abs_yaw_rate_rad_s"]) for record in records], 0.95
         ),
     }
+    drift_keys = (
+        "entry_planar_drift_m",
+        "turn_planar_drift_m",
+        "final_planar_drift_m",
+    )
+    if records and all(key in records[0] for key in drift_keys):
+        summary.update(
+            {
+                f"p95_{key}": _percentile(
+                    [float(record[key]) for record in records], 0.95
+                )
+                for key in drift_keys
+            }
+        )
     criterion_keys = (
         "height_criterion",
         "upright_criterion",
@@ -129,6 +143,8 @@ def _evaluate_scenario(
     asset = base.scene["robot"]
     start_xy = asset.data.root_link_pos_w[:, :2].clone()
     max_drift = torch.zeros(base.num_envs, device=base.device)
+    entry_drift = torch.full((base.num_envs,), torch.nan, device=base.device)
+    turn_drift = torch.full((base.num_envs,), torch.nan, device=base.device)
     peak_yaw_rate = torch.zeros(base.num_envs, device=base.device)
     criterion_keys = (
         "height_criterion",
@@ -159,6 +175,11 @@ def _evaluate_scenario(
             asset.data.root_link_pos_w[:, :2] - start_xy, dim=1
         )
         max_drift = torch.maximum(max_drift, displacement)
+        new_entry = base._head_spin_head_latch & torch.isnan(entry_drift)
+        entry_drift[new_entry] = displacement[new_entry]
+        turn_complete = base._head_spin_max >= TARGET_ANGLE
+        new_turn = turn_complete & torch.isnan(turn_drift)
+        turn_drift[new_turn] = displacement[new_turn]
         peak_yaw_rate = torch.maximum(
             peak_yaw_rate, asset.data.root_link_ang_vel_w[:, 2].abs()
         )
@@ -227,6 +248,21 @@ def _evaluate_scenario(
                 "episode_s": float(base.episode_length_buf[env_id].item())
                 * base.step_dt,
                 "max_planar_drift_m": float(max_drift[env_id].item()),
+                "entry_planar_drift_m": float(
+                    torch.where(
+                        torch.isnan(entry_drift[env_id]),
+                        max_drift[env_id],
+                        entry_drift[env_id],
+                    ).item()
+                ),
+                "turn_planar_drift_m": float(
+                    torch.where(
+                        torch.isnan(turn_drift[env_id]),
+                        max_drift[env_id],
+                        turn_drift[env_id],
+                    ).item()
+                ),
+                "final_planar_drift_m": float(displacement[env_id].item()),
                 "peak_abs_yaw_rate_rad_s": float(peak_yaw_rate[env_id].item()),
                 "best_stable_hold_s": float(best_stable_steps[env_id].item())
                 * base.step_dt,
@@ -240,6 +276,8 @@ def _evaluate_scenario(
         observations = env.get_observations()
         start_xy[done_ids] = asset.data.root_link_pos_w[done_ids, :2]
         max_drift[done_ids] = 0.0
+        entry_drift[done_ids] = torch.nan
+        turn_drift[done_ids] = torch.nan
         peak_yaw_rate[done_ids] = 0.0
         for value in ever.values():
             value[done_ids] = False

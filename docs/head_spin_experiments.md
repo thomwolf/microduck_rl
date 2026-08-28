@@ -36,8 +36,8 @@ claims about the current policy.
 | `headspin-rv3-seed42-recovery` | `6a91fe94984507d9db4ea75d` | Checkpoint-500 recovery-focused warm start | Canceled after checkpoint 750 was evaluated | <= $0.40 |
 | `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Completed at checkpoint 1249 | <= $0.35 |
 | `headspin-rv5-seed42-compact` | `6a920f7a984507d9db4ea95b` | Compactness polish submission | Failed before training: obsolete seed flag | <= $0.05 |
-| `headspin-rv5b-seed42-compact` | `6a921022984507d9db4ea973` | Corrected checkpoint-1249 compactness polish | Running; 1 h hard timeout | <= $0.60 exposure |
-| **Completed/canceled cumulative estimate** | | | | **$1.55** |
+| `headspin-rv5b-seed42-compact` | `6a921022984507d9db4ea973` | Corrected checkpoint-1249 compactness polish | Completed at checkpoint 1498 | <= $0.20 |
+| **Completed/canceled cumulative estimate** | | | | **$1.75** |
 
 ## Experiment 0: pipeline smoke
 
@@ -167,3 +167,24 @@ corrected job `6a921022984507d9db4ea973` uses both agent and environment seed 42
 It explicitly loaded `model_1249.pt`, resumed at iteration 1249/1499, and its
 live reward table showed stability 6.0, turn brake -0.25, and planar motion
 -1.0. No NaN terminations appeared during initialization.
+
+Checkpoint 1498 retained 100% strict success in every official 256-episode
+bucket. It improved p95 drift in the head-start buckets but did not improve the
+primary standing bucket: official p95 drift changed from 0.303 m to 0.311 m.
+It is therefore not promoted over checkpoint 1249.
+
+Phase-instrumented standing evaluation localized the fallback's p95 drift to
+0.069 m at first head support, 0.223 m at turn completion, and 0.299 m at the
+final stand. The matching checkpoint-1498 values were 0.063 m, 0.209 m, and
+0.283 m. Most displacement is created during supported yaw; reward-v5 kept the
+old -1 planar-speed weight in that phase and only extended it to entry and
+post-turn recovery, explaining the limited improvement.
+
+## Experiment 5: supported-turn compactness
+
+Warm-start checkpoint 1498, which preserves 100% success, and keep all reward-v5
+terms unchanged except for a 4x multiplier on planar-speed cost during valid
+head-only support. Entry retains scale 1 and post-turn recovery retains scale 4.
+This directly targets the phase that creates about three quarters of the final
+displacement. Promote only if standing success remains 100% and both
+turn-completion and final p95 drift improve materially.
