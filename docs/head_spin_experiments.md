@@ -35,7 +35,9 @@ claims about the current policy.
 | `headspin-rv2-seed42-stage1` | `6a91f596984507d9db4ea699` | Reward-v2 baseline through checkpoint 500 | Canceled after recovery stalled | <= $0.55 |
 | `headspin-rv3-seed42-recovery` | `6a91fe94984507d9db4ea75d` | Checkpoint-500 recovery-focused warm start | Canceled after checkpoint 750 was evaluated | <= $0.40 |
 | `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Completed at checkpoint 1249 | <= $0.35 |
-| **Completed/canceled cumulative estimate** | | | | **$1.50** |
+| `headspin-rv5-seed42-compact` | `6a920f7a984507d9db4ea95b` | Compactness polish submission | Failed before training: obsolete seed flag | <= $0.05 |
+| `headspin-rv5b-seed42-compact` | `6a921022984507d9db4ea973` | Corrected checkpoint-1249 compactness polish | Running; 1 h hard timeout | <= $0.60 exposure |
+| **Completed/canceled cumulative estimate** | | | | **$1.55** |
 
 ## Experiment 0: pipeline smoke
 
@@ -158,3 +160,10 @@ changes based on the residual-motion evidence:
 Checkpoint 1249 remains the fallback. Promote a polish checkpoint only if it
 retains 100% development success while reducing standing p95 drift; reject it
 immediately if strict success regresses materially.
+
+The first submission failed before PPO started because the current trainer
+expects `--agent.seed` rather than the obsolete `--seed` shorthand. The
+corrected job `6a921022984507d9db4ea973` uses both agent and environment seed 42.
+It explicitly loaded `model_1249.pt`, resumed at iteration 1249/1499, and its
+live reward table showed stability 6.0, turn brake -0.25, and planar motion
+-1.0. No NaN terminations appeared during initialization.
