@@ -28,6 +28,7 @@ import argparse
 import datetime as dt
 import os
 import shlex
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -36,7 +37,49 @@ import time
 from netrc import netrc
 from pathlib import Path
 
-from huggingface_hub import HfApi, Volume, get_token
+
+def _first_existing_ca_bundle(
+    default_cafile: str | None,
+    candidates: tuple[Path, ...],
+) -> Path | None:
+    """Return the first usable CA bundle, preferring Python's configured file."""
+    if default_cafile:
+        configured = Path(default_cafile)
+        if configured.is_file():
+            return configured
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def _configure_macos_tls() -> None:
+    """Point Python HTTPS clients at a usable macOS CA bundle when needed.
+
+    MacPorts Python can report an OpenSSL CA path that does not exist. ``uv
+    --native-tls`` fixes uv's own downloads but not Python clients such as
+    huggingface_hub/httpx, so select the system bundle before importing them.
+    Explicit user certificate settings always win.
+    """
+    if sys.platform != "darwin":
+        return
+    if explicit := os.environ.get("SSL_CERT_FILE") or os.environ.get(
+        "REQUESTS_CA_BUNDLE"
+    ):
+        os.environ.setdefault("SSL_CERT_FILE", explicit)
+        return
+
+    bundle = _first_existing_ca_bundle(
+        ssl.get_default_verify_paths().cafile,
+        (
+            Path("/etc/ssl/cert.pem"),
+            Path("/opt/homebrew/etc/ca-certificates/cert.pem"),
+        ),
+    )
+    if bundle is not None:
+        os.environ["SSL_CERT_FILE"] = str(bundle)
+
+
+_configure_macos_tls()
+
+from huggingface_hub import HfApi, Volume, get_token  # noqa: E402
 
 DEFAULT_IMAGE = "pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime"
 DEFAULT_FLAVOR = "l4x1"
