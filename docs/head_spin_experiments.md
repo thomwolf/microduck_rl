@@ -37,6 +37,7 @@ claims about the current policy.
 | `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Completed at checkpoint 1249 | <= $0.35 |
 | `headspin-rv5-seed42-compact` | `6a920f7a984507d9db4ea95b` | Compactness polish submission | Failed before training: obsolete seed flag | <= $0.05 |
 | `headspin-rv5b-seed42-compact` | `6a921022984507d9db4ea973` | Corrected checkpoint-1249 compactness polish | Completed at checkpoint 1498 | <= $0.20 |
+| `headspin-rv6-seed42-support-compact` | `6a92157645686a1580c1312f` | Checkpoint-1498 supported-spin compactness | Running; 1 h hard timeout | <= $0.60 exposure |
 | **Completed/canceled cumulative estimate** | | | | **$1.75** |
 
 ## Experiment 0: pipeline smoke
@@ -188,3 +189,7 @@ head-only support. Entry retains scale 1 and post-turn recovery retains scale 4.
 This directly targets the phase that creates about three quarters of the final
 displacement. Promote only if standing success remains 100% and both
 turn-completion and final p95 drift improve materially.
+
+HF job `6a92157645686a1580c1312f` uses source commit `a59bc24`. It explicitly
+loaded `model_1498.pt` and resumed at iteration 1498/1748 with finite rewards,
+2,048 environments, agent/environment seed 42, and no NaN terminations.
