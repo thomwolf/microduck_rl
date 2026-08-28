@@ -16,6 +16,7 @@ from mjlab.managers import (
     MetricsTermCfg,
     ObservationTermCfg,
     RewardTermCfg,
+    TerminationTermCfg,
 )
 
 from mjlab_microduck.tasks import mdp as microduck_mdp
@@ -31,8 +32,7 @@ from mjlab_microduck.tasks.microduck_roulade_env_cfg import (
 EPISODE_LENGTH_S = 7.0
 HEAD_SPIN_TARGET_ANGLE = math.pi
 HEAD_SPIN_DIRECTION = 1.0
-COMPLETION_GATE_LO = math.radians(165.0)
-COMPLETION_GATE_HI = HEAD_SPIN_TARGET_ANGLE
+HEAD_SPIN_SUCCESS_HOLD_S = 0.4
 
 
 def make_microduck_head_spin_env_cfg(play: bool = False):
@@ -47,93 +47,70 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
         if name.startswith("roulade_"):
             cfg.rewards.pop(name)
 
-    cfg.rewards["head_spin_support_entry"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_support_entry,
-        weight=3.0,
+    # Stage 1: potential progress toward the headstand plus a fixed event bonus
+    # for establishing valid top-of-head support. Both are unfarmable.
+    cfg.rewards["head_spin_entry_progress"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_entry_progress,
+        weight=2.0,
         params={"direction": HEAD_SPIN_DIRECTION},
     )
+    cfg.rewards["head_spin_support_entry"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_support_entry,
+        weight=2.0,
+        params={"direction": HEAD_SPIN_DIRECTION},
+    )
+
+    # Stage 2: the sole positive spin signal is new signed supported-yaw
+    # frontier. There is no contact/rate annuity to farm after completion.
     cfg.rewards["head_spin_progress"] = RewardTermCfg(
         func=microduck_mdp.head_spin_progress,
-        weight=10.0,
+        weight=8.0,
         params={
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "max_paid_rate": 4.0,
             "direction": HEAD_SPIN_DIRECTION,
         },
     )
-    cfg.rewards["head_spin_pivot"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_pivot,
-        weight=0.75,
-        params={"rate_norm": 2.0, "direction": HEAD_SPIN_DIRECTION},
+    # Stage 3 is HARD-gated at pi. Recovery progress pays changes in a bounded
+    # potential; the small composite annuity teaches the 0.4 s stable hold; the
+    # one-shot success event dominates and terminates the completed episode.
+    cfg.rewards["head_spin_recovery_progress"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_recovery_progress,
+        weight=5.0,
+        params={
+            "target_height": STAND_Z,
+            "target_angle": HEAD_SPIN_TARGET_ANGLE,
+            "direction": HEAD_SPIN_DIRECTION,
+        },
     )
-
-    # The standing attractor is completely closed until the supported yaw
-    # frontier reaches the requested half-turn. It therefore cannot reward the
-    # initial standing state or fight the entry onto the head.
     cfg.rewards["head_spin_landing_composite"] = RewardTermCfg(
         func=microduck_mdp.head_spin_landing_composite,
-        weight=4.0,
+        weight=1.0,
         params={
             "target_height": STAND_Z,
             "height_std": 0.04,
             "upright_std": 0.40,
             "pose_std": 0.40,
             "joint_indices": _LEG_JOINTS,
-            "gate_lo": COMPLETION_GATE_LO,
-            "gate_hi": COMPLETION_GATE_HI,
+            "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "target_overrides": None,
             "direction": HEAD_SPIN_DIRECTION,
         },
     )
-    cfg.rewards["head_spin_upright_after_turn"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_upright_after_turn,
-        weight=1.5,
+    cfg.rewards["head_spin_stable_success"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_stable_success_bonus,
+        weight=12.0,
         params={
-            "gate_lo": COMPLETION_GATE_LO,
-            "gate_hi": COMPLETION_GATE_HI,
+            "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "direction": HEAD_SPIN_DIRECTION,
+            "hold_s": HEAD_SPIN_SUCCESS_HOLD_S,
         },
     )
-    cfg.rewards["head_spin_height_after_turn"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_height_after_turn,
-        weight=1.0,
+    cfg.rewards["head_spin_turn_brake"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_turn_brake_penalty,
+        weight=-0.1,
         params={
-            "target_height": STAND_Z,
-            "std": 0.04,
-            "gate_lo": COMPLETION_GATE_LO,
-            "gate_hi": COMPLETION_GATE_HI,
-            "direction": HEAD_SPIN_DIRECTION,
-        },
-    )
-    cfg.rewards["head_spin_landing_sharp"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_landing_sharp,
-        weight=2.0,
-        params={
-            "target_height": STAND_Z,
-            "height_std": 0.015,
-            "upright_std": 0.3,
-            "gate_lo": COMPLETION_GATE_LO,
-            "gate_hi": COMPLETION_GATE_HI,
-            "direction": HEAD_SPIN_DIRECTION,
-        },
-    )
-    cfg.rewards["head_spin_stand_tax"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_stand_tax,
-        weight=5.0,
-        params={
-            "target_height": STAND_Z,
-            "gate_lo": COMPLETION_GATE_LO,
-            "gate_hi": COMPLETION_GATE_HI,
-            "direction": HEAD_SPIN_DIRECTION,
-        },
-    )
-    cfg.rewards["head_spin_rise_velocity"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_rise_velocity,
-        weight=0.75,
-        params={
-            "max_height": STAND_Z + 0.01,
-            "gate_lo": COMPLETION_GATE_LO,
-            "gate_hi": COMPLETION_GATE_HI,
+            "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "direction": HEAD_SPIN_DIRECTION,
         },
     )
@@ -156,6 +133,16 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
     # Yaw is the task, so the 3D angular-momentum regularizer must not oppose
     # it. body_ang_vel remains tiny and only penalizes world x/y rotation.
     cfg.rewards.pop("angular_momentum", None)
+
+    cfg.terminations["head_spin_success"] = TerminationTermCfg(
+        func=microduck_mdp.head_spin_stable_success_termination,
+        time_out=False,
+        params={
+            "target_angle": HEAD_SPIN_TARGET_ANGLE,
+            "direction": HEAD_SPIN_DIRECTION,
+            "hold_s": HEAD_SPIN_SUCCESS_HOLD_S,
+        },
+    )
 
     # Preserve the shared 61D layout while giving a feed-forward policy the
     # missing task state: [enter, spin, recover, direction]. Absolute yaw is
@@ -185,7 +172,7 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
         "headstand_roll_max": math.radians(4.0),
         "initial_spin_rate_range": (0.0, 2.0),
         "target_angle": HEAD_SPIN_TARGET_ANGLE,
-        "max_spawn_progress": math.radians(160.0),
+        "spawn_progress_range": (0.0, math.radians(160.0)),
         "direction": HEAD_SPIN_DIRECTION,
         "tuck_overrides": TUCK_OVERRIDES,
         "tuck_factor_range": (0.7, 1.0),
@@ -255,10 +242,9 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
         func=microduck_mdp.head_spin_final_stand_metric,
         params={
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
-            "min_height": 0.105,
-            "max_tilt_deg": 20.0,
             "spawn_bucket": "standing",
             "direction": HEAD_SPIN_DIRECTION,
+            "hold_s": HEAD_SPIN_SUCCESS_HOLD_S,
         },
         reduce="last",
     )
@@ -266,10 +252,9 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
         func=microduck_mdp.head_spin_final_stand_metric,
         params={
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
-            "min_height": 0.105,
-            "max_tilt_deg": 20.0,
             "spawn_bucket": "recovery",
             "direction": HEAD_SPIN_DIRECTION,
+            "hold_s": HEAD_SPIN_SUCCESS_HOLD_S,
         },
         reduce="last",
     )
@@ -279,5 +264,6 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
 
 MicroduckHeadSpinRlCfg = deepcopy(MicroduckRouladeRlCfg)
 MicroduckHeadSpinRlCfg.algorithm.symmetry_cfg = None
+MicroduckHeadSpinRlCfg.algorithm.gamma = 0.995
 MicroduckHeadSpinRlCfg.experiment_name = "microduck_head_spin"
 MicroduckHeadSpinRlCfg.run_name = "microduck_head_spin"

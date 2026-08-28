@@ -7200,6 +7200,11 @@ def roulade_lateral_velocity_penalty(
 
 _HEAD_SPIN_HEAD_SENSOR = "head_ground_contact"
 _HEAD_SPIN_FEET_SENSOR = "feet_ground_contact"
+_HEAD_SPIN_STAND_MIN_HEIGHT = 0.105
+_HEAD_SPIN_STAND_MAX_TILT_DEG = 20.0
+_HEAD_SPIN_STAND_MAX_LINEAR_SPEED = 0.15
+_HEAD_SPIN_STAND_MAX_ANGULAR_SPEED = 1.0
+_HEAD_SPIN_SUCCESS_HOLD_S = 0.4
 
 
 def head_spin_yaw_delta(
@@ -7256,7 +7261,22 @@ def _head_spin_state(
         env._head_spin_standing_spawn = torch.zeros(
             env.num_envs, dtype=torch.bool, device=env.device
         )
+        env._head_spin_entry_potential_prev = zeros.clone()
+        env._head_spin_entry_potential_ready = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_recovery_potential_prev = zeros.clone()
+        env._head_spin_recovery_potential_ready = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_stable_steps = torch.zeros(
+            env.num_envs, dtype=torch.long, device=env.device
+        )
+        env._head_spin_success_paid = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
         env._head_spin_last_update_step = -1
+        env._head_spin_stability_last_update_step = -1
     return env._head_spin_accum, env._head_spin_max, env._head_spin_paid
 
 
@@ -7308,6 +7328,102 @@ def _head_spin_completion_gate(
     return smooth * env._head_spin_head_latch.float()
 
 
+def _head_spin_complete(env: ManagerBasedRlEnv, target_angle: float) -> torch.Tensor:
+    """Return the hard task-completion gate used to unlock recovery."""
+    _, max_yaw, _ = _head_spin_state(env)
+    return env._head_spin_head_latch & (max_yaw >= target_angle)
+
+
+def _head_spin_potential_rate(
+    current: torch.Tensor,
+    previous: torch.Tensor,
+    active: torch.Tensor,
+    step_dt: float,
+) -> torch.Tensor:
+    """Convert a bounded potential change to a frequency-independent rate."""
+    return (current - previous) * active.float() / max(float(step_dt), 1e-6)
+
+
+def _head_spin_feet_grounded(env: ManagerBasedRlEnv) -> torch.Tensor:
+    """Return true when both physical feet contact the terrain."""
+    if _HEAD_SPIN_FEET_SENSOR not in env.scene.sensors:
+        return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    found = env.scene.sensors[_HEAD_SPIN_FEET_SENSOR].data.found
+    contacts = found.reshape(found.shape[0], -1) > 0
+    if contacts.shape[1] < 2:
+        return contacts.any(dim=1)
+    return contacts[:, :2].all(dim=1)
+
+
+def _head_spin_standing_state(
+    env: ManagerBasedRlEnv,
+    asset: Entity,
+) -> torch.Tensor:
+    """Return the conservative, deployable definition of a stable stand."""
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2],
+        nan=0.0,
+    )
+    quat = asset.data.root_link_quat_w
+    cos_tilt = torch.nan_to_num(
+        1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2)), nan=-1.0
+    )
+    linear_speed = torch.nan_to_num(
+        asset.data.root_link_lin_vel_w, nan=1e3
+    ).norm(dim=1)
+    angular_speed = torch.nan_to_num(
+        asset.data.root_link_ang_vel_w, nan=1e3
+    ).norm(dim=1)
+    head_contact = _sensor_any_contact(env, _HEAD_SPIN_HEAD_SENSOR)
+    if head_contact is None:
+        head_contact = torch.ones(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+    return (
+        (z >= _HEAD_SPIN_STAND_MIN_HEIGHT)
+        & (cos_tilt >= math.cos(math.radians(_HEAD_SPIN_STAND_MAX_TILT_DEG)))
+        & (linear_speed <= _HEAD_SPIN_STAND_MAX_LINEAR_SPEED)
+        & (angular_speed <= _HEAD_SPIN_STAND_MAX_ANGULAR_SPEED)
+        & _head_spin_feet_grounded(env)
+        & ~head_contact
+    )
+
+
+def _update_head_spin_stability(
+    env: ManagerBasedRlEnv,
+    asset: Entity,
+    target_angle: float,
+    direction: float,
+) -> None:
+    """Update the consecutive stable-stand counter exactly once per step."""
+    _update_head_spin_state(env, asset, direction=direction)
+    step = int(env.common_step_counter)
+    if step == env._head_spin_stability_last_update_step:
+        return
+    stable = _head_spin_complete(env, target_angle) & _head_spin_standing_state(
+        env, asset
+    )
+    env._head_spin_stable_steps = torch.where(
+        stable,
+        env._head_spin_stable_steps + 1,
+        torch.zeros_like(env._head_spin_stable_steps),
+    )
+    env._head_spin_stability_last_update_step = step
+
+
+def _head_spin_stable_success(
+    env: ManagerBasedRlEnv,
+    asset: Entity,
+    target_angle: float,
+    direction: float,
+    hold_s: float = _HEAD_SPIN_SUCCESS_HOLD_S,
+) -> torch.Tensor:
+    """Return true after a completed turn is followed by a stable hold."""
+    _update_head_spin_stability(env, asset, target_angle, direction)
+    hold_steps = max(1, math.ceil(hold_s / env.step_dt))
+    return env._head_spin_stable_steps >= hold_steps
+
+
 def reset_head_spin_state(
     env: ManagerBasedRlEnv,
     env_ids: torch.Tensor | None,
@@ -7325,7 +7441,7 @@ def reset_head_spin_state(
     headstand_roll_max: float = math.radians(4.0),
     initial_spin_rate_range: tuple[float, float] = (0.0, 2.0),
     target_angle: float = math.pi,
-    max_spawn_progress: float = math.radians(160.0),
+    spawn_progress_range: tuple[float, float] = (0.0, math.radians(160.0)),
     direction: float = 1.0,
     tuck_overrides: Optional[dict] = None,
     tuck_factor_range: tuple[float, float] = (0.7, 1.0),
@@ -7424,7 +7540,9 @@ def reset_head_spin_state(
             float(direction) * rate.unsqueeze(1) * world_z_body
         )
 
-    random_progress = torch.rand(num, device=env.device) * max_spawn_progress
+    random_progress = torch.empty(num, device=env.device).uniform_(
+        *spawn_progress_range
+    )
     spawn_progress = torch.where(
         is_head & ~is_recovery,
         random_progress,
@@ -7443,6 +7561,10 @@ def reset_head_spin_state(
     env._head_spin_support_bonus_paid[env_ids] = is_head
     env._head_spin_spawned_complete[env_ids] = is_recovery
     env._head_spin_standing_spawn[env_ids] = is_standing
+    env._head_spin_entry_potential_ready[env_ids] = False
+    env._head_spin_recovery_potential_ready[env_ids] = False
+    env._head_spin_stable_steps[env_ids] = 0
+    env._head_spin_success_paid[env_ids] = False
 
 
 def head_spin_stage_observation(
@@ -7473,7 +7595,47 @@ def head_spin_support_entry(
     _update_head_spin_state(env, asset, direction=direction)
     due = env._head_spin_new_support & ~env._head_spin_support_bonus_paid
     env._head_spin_support_bonus_paid |= due
-    return due.float()
+    # Return a rate so RewardManager's dt scaling produces a fixed event bonus.
+    return due.float() / env.step_dt
+
+
+def head_spin_entry_progress(
+    env: ManagerBasedRlEnv,
+    target_height: float = 0.065,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Potential shaping toward a low, inverted, flat-head entry state.
+
+    The bounded potential combines trunk height, trunk tilt, and the physical
+    head-top axis. Only changes are paid, so holding a crouch or rocking between
+    previously visited poses cannot generate an annuity.
+    """
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2],
+        nan=0.12,
+    )
+    height = torch.clamp((0.115 - z) / max(0.115 - target_height, 1e-6), 0.0, 1.0)
+    quat = asset.data.root_link_quat_w
+    cos_tilt = torch.nan_to_num(
+        1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2)), nan=1.0
+    )
+    tilt = torch.clamp(1.0 - cos_tilt, 0.0, 1.0)
+    top_down = torch.clamp(-_head_top_axis_world_z(env, asset), 0.0, 1.0)
+    potential = 0.25 * height + 0.30 * tilt + 0.45 * top_down
+
+    ready = env._head_spin_entry_potential_ready
+    previous = env._head_spin_entry_potential_prev
+    previous = torch.where(ready, previous, potential)
+    active = ~env._head_spin_head_latch
+    reward = _head_spin_potential_rate(
+        potential, previous, active, env.step_dt
+    )
+    env._head_spin_entry_potential_prev = potential.detach().clone()
+    env._head_spin_entry_potential_ready[:] = True
+    return reward
 
 
 def head_spin_progress(
@@ -7497,6 +7659,7 @@ def head_spin_progress(
 def head_spin_pivot(
     env: ManagerBasedRlEnv,
     rate_norm: float = 2.0,
+    target_angle: float = math.pi,
     direction: float = 1.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
@@ -7504,6 +7667,7 @@ def head_spin_pivot(
     asset: Entity = env.scene[asset_cfg.name]
     _update_head_spin_state(env, asset, direction=direction)
     support = _head_spin_valid_support(env, asset).float()
+    before_completion = (~_head_spin_complete(env, target_angle)).float()
     rate = torch.clamp(
         float(direction)
         * torch.nan_to_num(asset.data.root_link_ang_vel_w[:, 2], nan=0.0)
@@ -7511,7 +7675,94 @@ def head_spin_pivot(
         0.0,
         1.0,
     )
-    return support * rate
+    return support * rate * before_completion
+
+
+def head_spin_recovery_progress(
+    env: ManagerBasedRlEnv,
+    target_height: float,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Potential shaping from completed headstand toward a quiet feet stand."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    complete = _head_spin_complete(env, target_angle)
+
+    quat = asset.data.root_link_quat_w
+    cos_tilt = torch.nan_to_num(
+        1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2)), nan=-1.0
+    )
+    upright = torch.clamp((cos_tilt + 1.0) * 0.5, 0.0, 1.0)
+    z = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2],
+        nan=0.0,
+    )
+    height = torch.clamp(z / max(target_height, 1e-6), 0.0, 1.0)
+    feet = _head_spin_feet_grounded(env).float()
+    linear_speed = torch.nan_to_num(asset.data.root_link_lin_vel_w, nan=1e3).norm(
+        dim=1
+    )
+    angular_speed = torch.nan_to_num(
+        asset.data.root_link_ang_vel_w, nan=1e3
+    ).norm(dim=1)
+    still = torch.exp(-((linear_speed / 0.25) ** 2) - ((angular_speed / 2.0) ** 2))
+    potential = 0.45 * upright + 0.30 * height + 0.15 * feet + 0.10 * still
+
+    ready = env._head_spin_recovery_potential_ready
+    previous = env._head_spin_recovery_potential_prev
+    previous = torch.where(ready & complete, previous, potential)
+    reward = _head_spin_potential_rate(
+        potential, previous, complete, env.step_dt
+    )
+    env._head_spin_recovery_potential_prev = potential.detach().clone()
+    env._head_spin_recovery_potential_ready[:] = complete
+    return reward
+
+
+def head_spin_turn_brake_penalty(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Squared yaw rate after completion, encouraging a controlled exit."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    omega_z = torch.nan_to_num(asset.data.root_link_ang_vel_w[:, 2], nan=0.0)
+    return omega_z.pow(2) * _head_spin_complete(env, target_angle).float()
+
+
+def head_spin_stable_success_bonus(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    hold_s: float = _HEAD_SPIN_SUCCESS_HOLD_S,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """One-shot, frequency-independent bonus for completing a stable stand."""
+    asset: Entity = env.scene[asset_cfg.name]
+    success = _head_spin_stable_success(
+        env, asset, target_angle, direction, hold_s
+    )
+    due = success & ~env._head_spin_success_paid
+    env._head_spin_success_paid |= due
+    return due.float() / env.step_dt
+
+
+def head_spin_stable_success_termination(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    hold_s: float = _HEAD_SPIN_SUCCESS_HOLD_S,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Terminate once the completed maneuver has settled on both feet."""
+    asset: Entity = env.scene[asset_cfg.name]
+    return _head_spin_stable_success(
+        env, asset, target_angle, direction, hold_s
+    )
 
 
 def head_spin_landing_composite(
@@ -7521,8 +7772,7 @@ def head_spin_landing_composite(
     upright_std: float,
     pose_std: float,
     joint_indices: list,
-    gate_lo: float = math.radians(165.0),
-    gate_hi: float = math.pi,
+    target_angle: float = math.pi,
     target_overrides: Optional[dict] = None,
     direction: float = 1.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
@@ -7540,7 +7790,7 @@ def head_spin_landing_composite(
         target_overrides=target_overrides,
         asset_cfg=asset_cfg,
     )
-    return score * _head_spin_completion_gate(env, gate_lo, gate_hi)
+    return score * _head_spin_complete(env, target_angle).float()
 
 
 def head_spin_upright_after_turn(
@@ -7717,29 +7967,17 @@ def head_spin_support_metric(
 def head_spin_final_stand_metric(
     env: ManagerBasedRlEnv,
     target_angle: float = math.pi,
-    min_height: float = 0.105,
-    max_tilt_deg: float = 20.0,
     spawn_bucket: str = "any",
     direction: float = 1.0,
+    hold_s: float = _HEAD_SPIN_SUCCESS_HOLD_S,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     """Binary success metric: turn complete and robot upright on its feet."""
     asset: Entity = env.scene[asset_cfg.name]
     _update_head_spin_state(env, asset, direction=direction)
-    _, max_yaw, _ = _head_spin_state(env)
-    complete = env._head_spin_head_latch & (max_yaw >= target_angle)
-    z = torch.nan_to_num(
-        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2], nan=0.0
+    success = _head_spin_stable_success(
+        env, asset, target_angle, direction, hold_s
     )
-    quat = asset.data.root_link_quat_w
-    cos_tilt = 1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
-    feet = _sensor_any_contact(env, _HEAD_SPIN_FEET_SENSOR)
-    if feet is None:
-        feet = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-    standing = (z >= min_height) & (
-        cos_tilt >= math.cos(math.radians(max_tilt_deg))
-    )
-    success = complete & standing & feet
     if spawn_bucket == "standing":
         success &= env._head_spin_standing_spawn
     elif spawn_bucket == "recovery":

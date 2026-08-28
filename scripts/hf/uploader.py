@@ -38,6 +38,11 @@ def main() -> int:
             # also pick up the dumped configs once
             files += [p for p in root.glob("**/params/*.yaml")]
             files += [p for p in root.glob("**/params/*.json")]
+            if one_shot:
+                files += [p for p in root.glob("**/head_spin_eval.json")]
+                files += [p for p in root.glob("**/events.out.tfevents.*")]
+                files += [p for p in root.glob("**/videos/**/*.mp4")]
+                files += [p for p in root.glob("**/hf-train.log")]
 
             to_upload: list[CommitOperationAdd] = []
             for f in files:
