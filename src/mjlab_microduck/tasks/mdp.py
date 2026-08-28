@@ -7765,6 +7765,78 @@ def head_spin_stable_success_termination(
     )
 
 
+def head_spin_stability_score_from_components(
+    cos_tilt: torch.Tensor,
+    height: torch.Tensor,
+    both_feet: torch.Tensor,
+    head_clear: torch.Tensor,
+    linear_speed: torch.Tensor,
+    angular_speed: torch.Tensor,
+    target_height: float,
+    linear_speed_scale: float = 0.30,
+    angular_speed_scale: float = 2.0,
+) -> torch.Tensor:
+    """Smooth goal score aligned with every strict stable-stand predicate.
+
+    Posture is multiplicative so a policy cannot fully substitute one success
+    component for another, but the 0.25 contact floors retain gradient before
+    both feet land and the head releases.  The stillness factor has a 0.2
+    floor, allowing the policy to reach the pose before it learns to arrest
+    residual motion.  A perfect quiet stand scores one.
+    """
+    upright = torch.clamp((cos_tilt + 1.0) * 0.5, 0.0, 1.0)
+    height_score = torch.clamp(height / max(target_height, 1e-6), 0.0, 1.0)
+    feet_factor = 0.25 + 0.75 * both_feet.float()
+    head_factor = 0.25 + 0.75 * head_clear.float()
+    posture = upright * height_score * feet_factor * head_factor
+    stillness = torch.exp(
+        -((linear_speed / linear_speed_scale) ** 2)
+        - ((angular_speed / angular_speed_scale) ** 2)
+    )
+    return posture * (0.2 + 0.8 * stillness)
+
+
+def head_spin_stability_score(
+    env: ManagerBasedRlEnv,
+    target_height: float,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Dense post-turn annuity aligned with the strict stable-hold success."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    quat = asset.data.root_link_quat_w
+    cos_tilt = torch.nan_to_num(
+        1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2)), nan=-1.0
+    )
+    height = torch.nan_to_num(
+        asset.data.root_link_pos_w[:, 2] - env.scene.terrain.env_origins[:, 2],
+        nan=0.0,
+    )
+    linear_speed = torch.nan_to_num(
+        asset.data.root_link_lin_vel_w, nan=1e3
+    ).norm(dim=1)
+    angular_speed = torch.nan_to_num(
+        asset.data.root_link_ang_vel_w, nan=1e3
+    ).norm(dim=1)
+    head_contact = _sensor_any_contact(env, _HEAD_SPIN_HEAD_SENSOR)
+    if head_contact is None:
+        head_contact = torch.ones(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+    score = head_spin_stability_score_from_components(
+        cos_tilt=cos_tilt,
+        height=height,
+        both_feet=_head_spin_feet_grounded(env),
+        head_clear=~head_contact,
+        linear_speed=linear_speed,
+        angular_speed=angular_speed,
+        target_height=target_height,
+    )
+    return score * _head_spin_complete(env, target_angle).float()
+
+
 def head_spin_landing_composite(
     env: ManagerBasedRlEnv,
     target_height: float,

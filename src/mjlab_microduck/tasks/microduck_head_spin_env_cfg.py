@@ -23,7 +23,6 @@ from mjlab_microduck.tasks import mdp as microduck_mdp
 from mjlab_microduck.tasks.microduck_roulade_env_cfg import (
     STAND_Z,
     TUCK_OVERRIDES,
-    _LEG_JOINTS,
     MicroduckRouladeRlCfg,
     make_microduck_roulade_env_cfg,
 )
@@ -72,8 +71,10 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
         },
     )
     # Stage 3 is HARD-gated at pi. Recovery progress pays changes in a bounded
-    # potential; the small composite annuity teaches the 0.4 s stable hold; the
-    # one-shot success event dominates and terminates the completed episode.
+    # potential.  The post-turn annuity mirrors every physical success
+    # predicate (upright/height/feet/head-clear/stillness) and teaches the 0.4 s
+    # hold without constraining the legs to an unnecessary HOME joint pose.
+    # The one-shot success event dominates and terminates the completed episode.
     cfg.rewards["head_spin_recovery_progress"] = RewardTermCfg(
         func=microduck_mdp.head_spin_recovery_progress,
         weight=5.0,
@@ -83,23 +84,18 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
             "direction": HEAD_SPIN_DIRECTION,
         },
     )
-    cfg.rewards["head_spin_landing_composite"] = RewardTermCfg(
-        func=microduck_mdp.head_spin_landing_composite,
-        weight=1.0,
+    cfg.rewards["head_spin_stability_score"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_stability_score,
+        weight=4.0,
         params={
             "target_height": STAND_Z,
-            "height_std": 0.04,
-            "upright_std": 0.40,
-            "pose_std": 0.40,
-            "joint_indices": _LEG_JOINTS,
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
-            "target_overrides": None,
             "direction": HEAD_SPIN_DIRECTION,
         },
     )
     cfg.rewards["head_spin_stable_success"] = RewardTermCfg(
         func=microduck_mdp.head_spin_stable_success_bonus,
-        weight=12.0,
+        weight=30.0,
         params={
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "direction": HEAD_SPIN_DIRECTION,
