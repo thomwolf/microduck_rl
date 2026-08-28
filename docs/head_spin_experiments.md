@@ -34,7 +34,8 @@ claims about the current policy.
 | `headspin-rv2-smoke-t4` | `6a91f31b984507d9db4ea655` | Reward-v2 train/eval/export/upload smoke | Completed | <= $0.10 |
 | `headspin-rv2-seed42-stage1` | `6a91f596984507d9db4ea699` | Reward-v2 baseline through checkpoint 500 | Canceled after recovery stalled | <= $0.55 |
 | `headspin-rv3-seed42-recovery` | `6a91fe94984507d9db4ea75d` | Checkpoint-500 recovery-focused warm start | Running; 2 h hard timeout | <= $1.20 exposure |
-| **Completed/canceled cumulative estimate** | | | | **$0.75** |
+| `headspin-rv4-seed42-stability` | `6a920658984507d9db4ea83f` | Checkpoint-750 success-aligned warm start | Running; 2 h hard timeout | <= $1.20 exposure |
+| **Completed/canceled cumulative estimate** | | | | **$1.15** |
 
 ## Experiment 0: pipeline smoke
 
@@ -116,3 +117,8 @@ termination unchanged and raise its one-shot bonus from 12 to 30. The aligned
 annuity has weight 4 and can pay at most 1.6 before the 0.4 s success termination,
 so the terminal event still dominates partial-state farming. No spin or entry
 reward changes are made.
+
+HF job: `6a920658984507d9db4ea83f`. The bootstrap explicitly loaded Experiment 2
+`model_750.pt`; training resumed at iteration 750/1250 with the new stability
+score present in the live reward table. Experiment 2 was then canceled. Its
+conservative runtime estimate is <= $0.40.
