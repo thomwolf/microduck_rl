@@ -17,7 +17,6 @@ from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.utils.torch import configure_torch_backends
 
 import mjlab_microduck.tasks  # noqa: F401  # populate the task registry
-from mjlab_microduck.tasks import mdp as microduck_mdp
 
 
 TASK_ID = "Mjlab-HeadSpin-Flat-MicroDuck"
@@ -75,7 +74,7 @@ def _summarize(records: list[dict[str, float | bool]]) -> dict[str, float | int]
     def rate(key: str) -> float:
         return sum(bool(record[key]) for record in records) / max(count, 1)
 
-    summary: dict[str, float | int] = {
+    return {
         "episodes": count,
         "entry_rate": rate("entry"),
         "turn_complete_rate": rate("turn_complete"),
@@ -93,22 +92,6 @@ def _summarize(records: list[dict[str, float | bool]]) -> dict[str, float | int]
             [float(record["peak_abs_yaw_rate_rad_s"]) for record in records], 0.95
         ),
     }
-    criterion_keys = (
-        "height_criterion",
-        "upright_criterion",
-        "both_feet_criterion",
-        "head_clear_criterion",
-        "standing_pose_criterion",
-        "pose_and_linear_criterion",
-        "pose_and_angular_criterion",
-        "instant_stable_criterion",
-    )
-    if records and all(key in records[0] for key in criterion_keys):
-        summary.update({f"{key}_rate": rate(key) for key in criterion_keys})
-        summary["p95_best_stable_hold_s"] = _percentile(
-            [float(record["best_stable_hold_s"]) for record in records], 0.95
-        )
-    return summary
 
 
 def _evaluate_scenario(
@@ -130,21 +113,6 @@ def _evaluate_scenario(
     start_xy = asset.data.root_link_pos_w[:, :2].clone()
     max_drift = torch.zeros(base.num_envs, device=base.device)
     peak_yaw_rate = torch.zeros(base.num_envs, device=base.device)
-    criterion_keys = (
-        "height_criterion",
-        "upright_criterion",
-        "both_feet_criterion",
-        "head_clear_criterion",
-        "standing_pose_criterion",
-        "pose_and_linear_criterion",
-        "pose_and_angular_criterion",
-        "instant_stable_criterion",
-    )
-    ever = {
-        key: torch.zeros(base.num_envs, dtype=torch.bool, device=base.device)
-        for key in criterion_keys
-    }
-    best_stable_steps = torch.zeros(base.num_envs, dtype=torch.long, device=base.device)
     records: list[dict[str, float | bool]] = []
 
     while len(records) < episodes:
@@ -163,47 +131,6 @@ def _evaluate_scenario(
             peak_yaw_rate, asset.data.root_link_ang_vel_w[:, 2].abs()
         )
 
-        z = asset.data.root_link_pos_w[:, 2] - base.scene.terrain.env_origins[:, 2]
-        quat = asset.data.root_link_quat_w
-        cos_tilt = 1.0 - 2.0 * (quat[:, 1].pow(2) + quat[:, 2].pow(2))
-        linear_speed = asset.data.root_link_lin_vel_w.norm(dim=1)
-        angular_speed = asset.data.root_link_ang_vel_w.norm(dim=1)
-        both_feet = microduck_mdp._head_spin_feet_grounded(base)
-        head_contact = microduck_mdp._sensor_any_contact(
-            base, microduck_mdp._HEAD_SPIN_HEAD_SENSOR
-        )
-        if head_contact is None:
-            head_contact = torch.ones_like(both_feet)
-        criteria = {
-            "height_criterion": z >= microduck_mdp._HEAD_SPIN_STAND_MIN_HEIGHT,
-            "upright_criterion": cos_tilt
-            >= math.cos(math.radians(microduck_mdp._HEAD_SPIN_STAND_MAX_TILT_DEG)),
-            "both_feet_criterion": both_feet,
-            "head_clear_criterion": ~head_contact,
-        }
-        standing_pose = (
-            criteria["height_criterion"]
-            & criteria["upright_criterion"]
-            & criteria["both_feet_criterion"]
-            & criteria["head_clear_criterion"]
-        )
-        criteria["standing_pose_criterion"] = standing_pose
-        criteria["pose_and_linear_criterion"] = standing_pose & (
-            linear_speed <= microduck_mdp._HEAD_SPIN_STAND_MAX_LINEAR_SPEED
-        )
-        criteria["pose_and_angular_criterion"] = standing_pose & (
-            angular_speed <= microduck_mdp._HEAD_SPIN_STAND_MAX_ANGULAR_SPEED
-        )
-        criteria["instant_stable_criterion"] = (
-            criteria["pose_and_linear_criterion"]
-            & criteria["pose_and_angular_criterion"]
-        )
-        for key, value in criteria.items():
-            ever[key] |= value
-        best_stable_steps = torch.maximum(
-            best_stable_steps, base._head_spin_stable_steps
-        )
-
         done_ids = dones.nonzero(as_tuple=False).squeeze(-1)
         if len(done_ids) == 0:
             continue
@@ -215,35 +142,28 @@ def _evaluate_scenario(
             entry = bool(base._head_spin_head_latch[env_id].item())
             seeded_complete = bool(base._head_spin_spawned_complete[env_id].item())
             stable_success = bool(base._head_spin_success_paid[env_id].item())
-            record: dict[str, float | bool] = {
-                "entry": entry,
-                "turn_complete": entry and max_yaw >= TARGET_ANGLE,
-                "earned_turn": (
-                    entry and max_yaw >= TARGET_ANGLE and not seeded_complete
-                ),
-                "stable_success": stable_success,
-                "timeout": bool(base.reset_time_outs[env_id].item()),
-                "progress_fraction": min(max_yaw / TARGET_ANGLE, 1.0),
-                "episode_s": float(base.episode_length_buf[env_id].item())
-                * base.step_dt,
-                "max_planar_drift_m": float(max_drift[env_id].item()),
-                "peak_abs_yaw_rate_rad_s": float(peak_yaw_rate[env_id].item()),
-                "best_stable_hold_s": float(best_stable_steps[env_id].item())
-                * base.step_dt,
-            }
-            record.update(
-                {key: bool(ever[key][env_id].item()) for key in criterion_keys}
+            records.append(
+                {
+                    "entry": entry,
+                    "turn_complete": entry and max_yaw >= TARGET_ANGLE,
+                    "earned_turn": (
+                        entry and max_yaw >= TARGET_ANGLE and not seeded_complete
+                    ),
+                    "stable_success": stable_success,
+                    "timeout": bool(base.reset_time_outs[env_id].item()),
+                    "progress_fraction": min(max_yaw / TARGET_ANGLE, 1.0),
+                    "episode_s": float(base.episode_length_buf[env_id].item())
+                    * base.step_dt,
+                    "max_planar_drift_m": float(max_drift[env_id].item()),
+                    "peak_abs_yaw_rate_rad_s": float(peak_yaw_rate[env_id].item()),
+                }
             )
-            records.append(record)
 
         base.reset(env_ids=done_ids)
         observations = env.get_observations()
         start_xy[done_ids] = asset.data.root_link_pos_w[done_ids, :2]
         max_drift[done_ids] = 0.0
         peak_yaw_rate[done_ids] = 0.0
-        for value in ever.values():
-            value[done_ids] = False
-        best_stable_steps[done_ids] = 0
 
     summary = _summarize(records)
     print(f"[eval] {name}: {json.dumps(summary, sort_keys=True)}", flush=True)
@@ -257,13 +177,6 @@ def main() -> int:
     parser.add_argument("--task", default=TASK_ID)
     parser.add_argument("--num-envs", type=int, default=256)
     parser.add_argument("--episodes-per-scenario", type=int, default=512)
-    parser.add_argument(
-        "--scenarios",
-        nargs="+",
-        choices=tuple(SCENARIOS),
-        default=tuple(SCENARIOS),
-        help="Evaluation buckets to run (defaults to all).",
-    )
     parser.add_argument("--seed", type=int, default=20260828)
     parser.add_argument("--device", default=None)
     parser.add_argument("--output", type=Path, default=Path("head_spin_eval.json"))
@@ -299,7 +212,6 @@ def main() -> int:
             args.episodes_per_scenario,
         )
         for name, params in SCENARIOS.items()
-        if name in args.scenarios
     }
     report = {
         "task": args.task,

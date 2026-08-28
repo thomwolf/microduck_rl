@@ -95,24 +95,3 @@ HF job: `6a91fe94984507d9db4ea75d`. The bootstrap explicitly staged and loaded
 `model_500.pt`; the first logged learning iteration was 500/1500 and the live
 spawn mix was 10/20/70 as intended. Experiment 1 was canceled only after this
 load was confirmed.
-
-Checkpoint 750 again achieved 100% entry and turn completion but 0% stable
-success in every 64-episode bucket. A recovery-only component diagnostic found
-that every episode reached standing height, both feet contact, and head release;
-31.25% reached the 20-degree upright threshold, 17.19% reached the complete
-standing pose, 7.81% combined pose with the linear-speed threshold, 6.25%
-combined pose with the angular-speed threshold, and 1/64 reached all strict
-criteria instantaneously. None held them for 0.4 s. Therefore increased recovery
-sampling alone is insufficient: the learned exit reaches the feet but does not
-arrest its residual tilt and motion.
-
-## Experiment 3: success-aligned stability reward
-
-Warm-start Experiment 2 checkpoint 750 with the same 10/20/70 spawn mix. Replace
-the joint-HOME landing composite with a smooth post-turn score aligned to the
-actual success predicates: upright trunk, standing height, both feet, released
-head, low linear speed, and low angular speed. Keep the strict 0.4 s success
-termination unchanged and raise its one-shot bonus from 12 to 30. The aligned
-annuity has weight 4 and can pay at most 1.6 before the 0.4 s success termination,
-so the terminal event still dominates partial-state farming. No spin or entry
-reward changes are made.

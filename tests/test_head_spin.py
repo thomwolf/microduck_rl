@@ -53,46 +53,13 @@ def test_cfg_requires_a_supported_half_turn_and_has_no_yaw_blocker():
 
 def test_recovery_is_hard_gated_at_the_full_target_angle():
     cfg = make_microduck_head_spin_env_cfg()
-    landing = cfg.rewards["head_spin_stability_score"]
+    landing = cfg.rewards["head_spin_landing_composite"]
     assert landing.params["target_angle"] == math.pi
     assert "gate_lo" not in landing.params
     assert "head_spin_upright_after_turn" not in cfg.rewards
     assert "head_spin_height_after_turn" not in cfg.rewards
     assert "head_spin_landing_sharp" not in cfg.rewards
     assert "head_spin_rise_velocity" not in cfg.rewards
-
-
-def test_stability_score_is_maximal_only_for_a_quiet_complete_stand():
-    perfect = mdp.head_spin_stability_score_from_components(
-        cos_tilt=torch.tensor([1.0]),
-        height=torch.tensor([0.11]),
-        both_feet=torch.tensor([True]),
-        head_clear=torch.tensor([True]),
-        linear_speed=torch.tensor([0.0]),
-        angular_speed=torch.tensor([0.0]),
-        target_height=0.11,
-    )
-    inverted = mdp.head_spin_stability_score_from_components(
-        cos_tilt=torch.tensor([-1.0]),
-        height=torch.tensor([0.11]),
-        both_feet=torch.tensor([True]),
-        head_clear=torch.tensor([True]),
-        linear_speed=torch.tensor([0.0]),
-        angular_speed=torch.tensor([0.0]),
-        target_height=0.11,
-    )
-    moving = mdp.head_spin_stability_score_from_components(
-        cos_tilt=torch.tensor([1.0]),
-        height=torch.tensor([0.11]),
-        both_feet=torch.tensor([True]),
-        head_clear=torch.tensor([True]),
-        linear_speed=torch.tensor([0.30]),
-        angular_speed=torch.tensor([2.0]),
-        target_height=0.11,
-    )
-    assert torch.allclose(perfect, torch.ones(1))
-    assert torch.allclose(inverted, torch.zeros(1))
-    assert 0.2 < moving.item() < perfect.item()
 
 
 def test_hard_completion_gate_does_not_leak_before_pi():
