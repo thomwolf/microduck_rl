@@ -47,7 +47,8 @@ promotion gates, not claims about the current policy.
 | `headspin-rv8-pivot-diagnostic` | `6a922a4045686a1580c134bf` | Evaluation-only head-pivot instrumentation | Evaluator API mismatch; no training | <= $0.05 |
 | `headspin-rv8-pivot-diagnostic-v2` | `6a922b70984507d9db4eac27` | Corrected evaluation-only head-pivot instrumentation | Completed; no training | <= $0.05 |
 | `headspin-rv9-smoke-phase-correct` | `6a922d12984507d9db4eac43` | Phase-correct reward integration smoke | Failed before first update: unresolved body slice | <= $0.05 |
-| **Completed/canceled cumulative estimate** | | | | **$2.75** |
+| `headspin-rv9-smoke-phase-correct-v2` | `6a922e27984507d9db4eac64` | Corrected phase-correct reward smoke | Finite pivot reward; zero NaNs; canceled | <= $0.05 |
+| **Completed/canceled cumulative estimate** | | | | **$2.80** |
 
 ## Experiment 0: pipeline smoke
 
@@ -298,3 +299,8 @@ This separates pivot slip from necessary body kinematics and separately asks
 the recovery to finish near its starting point. Promote if 100% official success
 is preserved and both standing p95 head drift and final root displacement cross
 their 0.10 m / 0.20 m gates.
+
+The first smoke exposed an unresolved `SceneEntityCfg.body_ids` slice before its
+first PPO update. The corrected smoke resolves `jaw_soft` from the runtime asset,
+loaded checkpoint 2494, produced finite nonzero pivot-displacement rewards, and
+reported zero NaN terminations. It was canceled after verification.
