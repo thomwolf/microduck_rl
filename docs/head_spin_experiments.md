@@ -46,7 +46,8 @@ promotion gates, not claims about the current policy.
 | `headspin-rv8-seed42-direct-drift` | `6a922576984507d9db4eaba9` | Checkpoint-2245 direct displacement shaping | Completed at checkpoint 2494 | <= $0.20 |
 | `headspin-rv8-pivot-diagnostic` | `6a922a4045686a1580c134bf` | Evaluation-only head-pivot instrumentation | Evaluator API mismatch; no training | <= $0.05 |
 | `headspin-rv8-pivot-diagnostic-v2` | `6a922b70984507d9db4eac27` | Corrected evaluation-only head-pivot instrumentation | Completed; no training | <= $0.05 |
-| **Completed/canceled cumulative estimate** | | | | **$2.70** |
+| `headspin-rv9-smoke-phase-correct` | `6a922d12984507d9db4eac43` | Phase-correct reward integration smoke | Failed before first update: unresolved body slice | <= $0.05 |
+| **Completed/canceled cumulative estimate** | | | | **$2.75** |
 
 ## Experiment 0: pipeline smoke
 

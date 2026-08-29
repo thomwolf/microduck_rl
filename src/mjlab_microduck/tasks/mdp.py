@@ -8109,15 +8109,15 @@ def head_spin_planar_displacement_penalty(
 def head_spin_head_pivot_displacement_penalty(
     env: ManagerBasedRlEnv,
     direction: float = 1.0,
-    asset_cfg: SceneEntityCfg = SceneEntityCfg(
-        "robot", body_names=["jaw_soft"]
-    ),
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
     """Squared translation of the head assembly from first valid support."""
     asset: Entity = env.scene[asset_cfg.name]
     _update_head_spin_state(env, asset, direction=direction)
     supported = _head_spin_valid_support(env, asset)
-    head_xy = asset.data.body_com_pos_w[:, asset_cfg.body_ids[0], :2]
+    head_xy = asset.data.body_com_pos_w[
+        :, asset.body_names.index("jaw_soft"), :2
+    ]
     anchor_missing = torch.isnan(env._head_spin_head_anchor_xy[:, 0])
     new_anchor = supported & anchor_missing
     env._head_spin_head_anchor_xy[new_anchor] = head_xy[new_anchor]
@@ -8137,9 +8137,6 @@ def head_spin_planar_drift_penalty(
     supported_scale: float = 4.0,
     post_turn_scale: float = 4.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
-    head_asset_cfg: SceneEntityCfg = SceneEntityCfg(
-        "robot", body_names=["jaw_soft"]
-    ),
 ) -> torch.Tensor:
     """Phase-aligned planar speed: planted head during yaw, root otherwise."""
     asset: Entity = env.scene[asset_cfg.name]
@@ -8147,7 +8144,7 @@ def head_spin_planar_drift_penalty(
     return head_spin_phase_planar_motion_cost_from_components(
         root_planar_velocity=asset.data.root_link_lin_vel_w[:, :2],
         head_planar_velocity=asset.data.body_com_lin_vel_w[
-            :, head_asset_cfg.body_ids[0], :2
+            :, asset.body_names.index("jaw_soft"), :2
         ],
         supported=_head_spin_valid_support(env, asset),
         complete=_head_spin_complete(env, target_angle),
