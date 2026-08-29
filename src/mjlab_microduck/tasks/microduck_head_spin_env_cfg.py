@@ -106,12 +106,12 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
     )
     cfg.rewards["head_spin_compact_success"] = RewardTermCfg(
         func=microduck_mdp.head_spin_compact_success_bonus,
-        weight=15.0,
+        weight=60.0,
         params={
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "direction": HEAD_SPIN_DIRECTION,
             "hold_s": HEAD_SPIN_SUCCESS_HOLD_S,
-            "drift_scale": 0.15,
+            "drift_scale": 0.20,
         },
     )
     cfg.rewards["head_spin_turn_brake"] = RewardTermCfg(
@@ -145,7 +145,7 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
     )
     cfg.rewards["head_spin_planar_displacement"] = RewardTermCfg(
         func=microduck_mdp.head_spin_planar_displacement_penalty,
-        weight=-20.0,
+        weight=-100.0,
         params={
             "target_angle": HEAD_SPIN_TARGET_ANGLE,
             "direction": HEAD_SPIN_DIRECTION,

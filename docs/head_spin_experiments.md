@@ -48,7 +48,8 @@ promotion gates, not claims about the current policy.
 | `headspin-rv8-pivot-diagnostic-v2` | `6a922b70984507d9db4eac27` | Corrected evaluation-only head-pivot instrumentation | Completed; no training | <= $0.05 |
 | `headspin-rv9-smoke-phase-correct` | `6a922d12984507d9db4eac43` | Phase-correct reward integration smoke | Failed before first update: unresolved body slice | <= $0.05 |
 | `headspin-rv9-smoke-phase-correct-v2` | `6a922e27984507d9db4eac64` | Corrected phase-correct reward smoke | Finite pivot reward; zero NaNs; canceled | <= $0.05 |
-| **Completed/canceled cumulative estimate** | | | | **$2.80** |
+| `headspin-rv9-seed42-phase-correct` | `6a922f39984507d9db4eac88` | Checkpoint-2494 phase-correct compactness | Completed at checkpoint 2743 | <= $0.20 |
+| **Completed/canceled cumulative estimate** | | | | **$3.00** |
 
 ## Experiment 0: pipeline smoke
 
@@ -304,3 +305,24 @@ The first smoke exposed an unresolved `SceneEntityCfg.body_ids` slice before its
 first PPO update. The corrected smoke resolves `jaw_soft` from the runtime asset,
 loaded checkpoint 2494, produced finite nonzero pivot-displacement rewards, and
 reported zero NaN terminations. It was canceled after verification.
+
+Checkpoint 2743 retained 100% strict success in all five official 256-episode
+buckets. Standing p95 planted-head drift crossed the new gate narrowly, changing
+from 0.101 m to 0.100 m. However, p95 final root displacement regressed from
+0.221 m to 0.246 m. This supports the phase-correct pivot target but shows that
+the unchanged final-position terms are too weak relative to the 30-point strict
+success event.
+
+## Experiment 9: final-position recovery dose
+
+Continue from checkpoint 2743 with the phase-correct pivot objective unchanged.
+Change only the success-conditioned final-position dose:
+
+- increase the post-turn squared root-displacement cost from -20 to -100;
+- increase the compact strict-success bonus from +15 to +60 and broaden its
+  final-displacement scale from 0.15 m to 0.20 m so the current 0.25 m policy
+  receives a usable gradient.
+
+The extra bonus remains impossible without the original strict task success,
+and the original +30 event is preserved. Promote if official success remains
+100%, planted-head p95 remains below 0.10 m, and final p95 crosses 0.20 m.
