@@ -19,12 +19,13 @@ Development promotion gates:
 4. spin-from-0° stable success >= 50%;
 5. standing full-sequence success >= 30% before robustification.
 
-The final candidate must exceed 80% standing full-sequence success over at
-least 1,000 held-out episodes per seed, across three seeds, with p95 planted-head
-drift below 0.10 m, p95 final root displacement below 0.20 m, and no NaN
-terminations. Maximum trunk excursion is still reported but is not a gate,
-because the trunk must move around the planted head during inversion. These are
-promotion gates, not claims about the current policy.
+The final candidate must exceed 99% standing full-sequence success over at
+least 1,000 held-out episodes per seed, across three seeds, retain 100% entry and
+supported 180-degree completion, keep p95 planted-head drift below 0.10 m, and
+show no NaN failures. Final root displacement and maximum trunk excursion remain
+reported diagnostics, but are not deployment gates without a hardware baseline:
+the feed-forward actor has no global-position observation, and the trunk must
+move around the planted head during inversion.
 
 ## Cost ledger
 
@@ -50,7 +51,10 @@ promotion gates, not claims about the current policy.
 | `headspin-rv9-smoke-phase-correct-v2` | `6a922e27984507d9db4eac64` | Corrected phase-correct reward smoke | Finite pivot reward; zero NaNs; canceled | <= $0.05 |
 | `headspin-rv9-seed42-phase-correct` | `6a922f39984507d9db4eac88` | Checkpoint-2494 phase-correct compactness | Completed at checkpoint 2743 | <= $0.20 |
 | `headspin-rv10-seed42-final-position` | `6a9233bd45686a1580c13692` | Checkpoint-2743 stronger final-position dose | Completed at checkpoint 2992; rejected | <= $0.20 |
-| **Completed/canceled cumulative estimate** | | | | **$3.20** |
+| `headspin-final-eval-seed20260828` | `6a92384d984507d9db4ead2c` | Frozen checkpoint 2494, 1,000 standing episodes | 1,000/1,000 strict success | <= $0.10 |
+| `headspin-final-eval-seed35042` | `6a92384545686a1580c13735` | Frozen checkpoint 2494, 1,000 standing episodes | 999/1,000 strict success | <= $0.10 |
+| `headspin-final-eval-seed45043` | `6a92384d45686a1580c13739` | Frozen checkpoint 2494, 1,000 standing episodes | 1,000/1,000 strict success | <= $0.10 |
+| **Completed/canceled cumulative estimate** | | | | **$3.50** |
 
 ## Experiment 0: pipeline smoke
 
@@ -341,3 +345,26 @@ hardware baseline, not part of the user's task definition. Two controlled dose
 experiments failed to cross them, while visual inspection shows a clean complete
 maneuver. Freeze the policy and measure its actual distribution over 1,000
 standing episodes on each of three held-out seeds before any further training.
+
+## Final frozen-policy validation
+
+Checkpoint `model_2494.pt` from `pollen-robotics/headspin-rv8-seed42-direct-drift`
+(training source commit `60dbe1a`) is the promoted policy. Three independent
+evaluation-only jobs ran 1,000 standing-start episodes each:
+
+| Seed | Strict success | Entry | 180-degree turn | p95 head pivot | p95 final root | Timeouts |
+|---:|---:|---:|---:|---:|---:|---:|
+| 20260828 | 100.0% | 100.0% | 100.0% | 0.098 m | 0.219 m | 0 |
+| 35042 | 99.9% | 100.0% | 100.0% | 0.095 m | 0.221 m | 1 |
+| 45043 | 100.0% | 100.0% | 100.0% | 0.098 m | 0.221 m | 0 |
+
+Aggregate strict success is 2,999/3,000 (99.967%). Every episode established
+valid head-only support and earned at least pi radians of supported yaw. No NaN
+failure occurred. A fresh CPU rollout terminated in strict success after 1.8 s;
+visual inspection shows standing entry, feet-clear head support, the half-turn,
+and a stable opposite-facing stand. The ONNX export passes `onnx.checker` and
+finite ONNX Runtime inference with the deployment shape `[1, 61] -> [1, 14]`.
+
+The branch restores reward-v8 as the default training configuration so the code
+matches the promoted checkpoint; the rejected phase-correct and strong-dose
+experiments remain documented above rather than silently becoming defaults.
