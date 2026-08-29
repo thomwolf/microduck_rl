@@ -115,6 +115,20 @@ def test_compactness_score_directly_tracks_maximum_drift():
     assert score[3] == 0.0
 
 
+def test_phase_motion_cost_uses_head_only_during_supported_yaw():
+    root = torch.tensor([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]])
+    head = torch.tensor([[0.5, 0.0], [0.5, 0.0], [0.5, 0.0]])
+    cost = mdp.head_spin_phase_planar_motion_cost_from_components(
+        root,
+        head,
+        supported=torch.tensor([False, True, True]),
+        complete=torch.tensor([False, False, True]),
+        supported_scale=8.0,
+        post_turn_scale=8.0,
+    )
+    assert torch.allclose(cost, torch.tensor([1.0, 2.0, 8.0]))
+
+
 def test_cfg_polish_scales_match_strict_stability_thresholds():
     cfg = make_microduck_head_spin_env_cfg()
     stability = cfg.rewards["head_spin_stability_score"]
@@ -124,6 +138,7 @@ def test_cfg_polish_scales_match_strict_stability_thresholds():
     assert drift.params["supported_scale"] == 8.0
     assert drift.params["post_turn_scale"] == 8.0
     assert cfg.rewards["head_spin_planar_displacement"].weight == -20.0
+    assert cfg.rewards["head_spin_head_pivot_displacement"].weight == -20.0
     compact = cfg.rewards["head_spin_compact_success"]
     assert compact.weight == 15.0
     assert compact.params["drift_scale"] == 0.15

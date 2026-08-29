@@ -20,9 +20,11 @@ Development promotion gates:
 5. standing full-sequence success >= 30% before robustification.
 
 The final candidate must exceed 80% standing full-sequence success over at
-least 1,000 held-out episodes per seed, across three seeds, with p95 planar
-drift below 0.15 m and no NaN terminations. These are promotion gates, not
-claims about the current policy.
+least 1,000 held-out episodes per seed, across three seeds, with p95 planted-head
+drift below 0.10 m, p95 final root displacement below 0.20 m, and no NaN
+terminations. Maximum trunk excursion is still reported but is not a gate,
+because the trunk must move around the planted head during inversion. These are
+promotion gates, not claims about the current policy.
 
 ## Cost ledger
 
@@ -43,7 +45,8 @@ claims about the current policy.
 | `headspin-rv8-smoke-direct-drift` | `6a922473984507d9db4eab8a` | Direct-displacement integration smoke | Canceled after finite reward verification | <= $0.05 |
 | `headspin-rv8-seed42-direct-drift` | `6a922576984507d9db4eaba9` | Checkpoint-2245 direct displacement shaping | Completed at checkpoint 2494 | <= $0.20 |
 | `headspin-rv8-pivot-diagnostic` | `6a922a4045686a1580c134bf` | Evaluation-only head-pivot instrumentation | Evaluator API mismatch; no training | <= $0.05 |
-| **Completed/canceled cumulative estimate** | | | | **$2.65** |
+| `headspin-rv8-pivot-diagnostic-v2` | `6a922b70984507d9db4eac27` | Corrected evaluation-only head-pivot instrumentation | Completed; no training | <= $0.05 |
+| **Completed/canceled cumulative estimate** | | | | **$2.70** |
 
 ## Experiment 0: pipeline smoke
 
@@ -270,3 +273,27 @@ excursion with undesirable pivot sliding. Before further reward changes,
 instrument the `jaw_soft` head body's displacement during valid head-only
 support. Compactness should mean a planted head pivot plus a final stand near
 the starting position, rather than an immobile trunk throughout inversion.
+
+The corrected evaluation-only diagnostic measured standing-start p95 head-COM
+drift of 0.101 m during valid head-only support, versus 0.011 m in recovery-only
+episodes with no supported yaw. This confirms real pivot sliding during the
+turn, while also showing that the 0.223 m maximum trunk excursion is not itself
+the right compactness target. Checkpoint 2494 finished 0.221 m from its initial
+root position.
+
+## Experiment 8: phase-correct compactness
+
+Warm-start checkpoint 2494 and preserve all task/success gates. Correct the
+compactness semantics without increasing their weights:
+
+- during valid supported yaw, the 8x motion cost reads `jaw_soft` head-COM
+  planar velocity rather than trunk-root velocity;
+- add a -20 squared head-COM displacement cost relative to first valid support;
+- apply the existing -20 root-displacement cost only after the 180-degree turn;
+- grade the +15 compact-success event by final root displacement, not maximum
+  trunk excursion during the inverted arc.
+
+This separates pivot slip from necessary body kinematics and separately asks
+the recovery to finish near its starting point. Promote if 100% official success
+is preserved and both standing p95 head drift and final root displacement cross
+their 0.10 m / 0.20 m gates.

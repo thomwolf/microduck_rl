@@ -7281,6 +7281,9 @@ def _head_spin_state(
         env._head_spin_start_xy = torch.zeros(
             (env.num_envs, 2), device=env.device
         )
+        env._head_spin_head_anchor_xy = torch.full(
+            (env.num_envs, 2), torch.nan, device=env.device
+        )
         env._head_spin_max_planar_drift = zeros.clone()
         env._head_spin_last_update_step = -1
         env._head_spin_stability_last_update_step = -1
@@ -7574,6 +7577,7 @@ def reset_head_spin_state(
     env._head_spin_success_paid[env_ids] = False
     env._head_spin_compact_success_paid[env_ids] = False
     env._head_spin_start_xy[env_ids] = env.sim.data.qpos[env_ids, :2]
+    env._head_spin_head_anchor_xy[env_ids] = torch.nan
     env._head_spin_max_planar_drift[env_ids] = 0.0
 
 
@@ -7794,8 +7798,10 @@ def head_spin_compact_success_bonus(
     )
     due = success & ~env._head_spin_compact_success_paid
     env._head_spin_compact_success_paid |= due
+    # Grade where the robot finishes, not the trunk's necessary kinematic arc
+    # around the planted head during inversion.
     score = head_spin_compactness_score_from_drift(
-        env._head_spin_max_planar_drift, drift_scale=drift_scale
+        displacement, drift_scale=drift_scale
     )
     return due.float() * score / env.step_dt
 
@@ -8054,12 +8060,39 @@ def head_spin_planar_motion_cost_from_components(
     return velocity.pow(2).sum(dim=1) * phase_scale
 
 
+def head_spin_phase_planar_motion_cost_from_components(
+    root_planar_velocity: torch.Tensor,
+    head_planar_velocity: torch.Tensor,
+    supported: torch.Tensor,
+    complete: torch.Tensor,
+    supported_scale: float = 4.0,
+    post_turn_scale: float = 4.0,
+) -> torch.Tensor:
+    """Use planted-head motion during yaw and root motion in other phases."""
+    root = torch.nan_to_num(
+        root_planar_velocity, nan=0.0, posinf=0.0, neginf=0.0
+    )
+    head = torch.nan_to_num(
+        head_planar_velocity, nan=0.0, posinf=0.0, neginf=0.0
+    )
+    root_cost = root.pow(2).sum(dim=1)
+    head_cost = head.pow(2).sum(dim=1)
+    return torch.where(
+        complete,
+        root_cost * float(post_turn_scale),
+        torch.where(supported, head_cost * float(supported_scale), root_cost),
+    )
+
+
 def head_spin_planar_displacement_penalty(
     env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-    """Squared world-xy displacement from this episode's reset position."""
+    """Post-turn squared root displacement from the episode's reset position."""
     asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
     displacement = asset.data.root_link_pos_w[:, :2] - env._head_spin_start_xy
     displacement = torch.nan_to_num(
         displacement, nan=1e3, posinf=1e3, neginf=-1e3
@@ -8068,7 +8101,33 @@ def head_spin_planar_displacement_penalty(
     env._head_spin_max_planar_drift = torch.maximum(
         env._head_spin_max_planar_drift, radial_drift
     )
-    return displacement.pow(2).sum(dim=1)
+    return displacement.pow(2).sum(dim=1) * _head_spin_complete(
+        env, target_angle
+    ).float()
+
+
+def head_spin_head_pivot_displacement_penalty(
+    env: ManagerBasedRlEnv,
+    direction: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg(
+        "robot", body_names=["jaw_soft"]
+    ),
+) -> torch.Tensor:
+    """Squared translation of the head assembly from first valid support."""
+    asset: Entity = env.scene[asset_cfg.name]
+    _update_head_spin_state(env, asset, direction=direction)
+    supported = _head_spin_valid_support(env, asset)
+    head_xy = asset.data.body_com_pos_w[:, asset_cfg.body_ids[0], :2]
+    anchor_missing = torch.isnan(env._head_spin_head_anchor_xy[:, 0])
+    new_anchor = supported & anchor_missing
+    env._head_spin_head_anchor_xy[new_anchor] = head_xy[new_anchor]
+    displacement = torch.nan_to_num(
+        head_xy - env._head_spin_head_anchor_xy,
+        nan=0.0,
+        posinf=1e3,
+        neginf=-1e3,
+    )
+    return displacement.pow(2).sum(dim=1) * supported.float()
 
 
 def head_spin_planar_drift_penalty(
@@ -8078,12 +8137,18 @@ def head_spin_planar_drift_penalty(
     supported_scale: float = 4.0,
     post_turn_scale: float = 4.0,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    head_asset_cfg: SceneEntityCfg = SceneEntityCfg(
+        "robot", body_names=["jaw_soft"]
+    ),
 ) -> torch.Tensor:
-    """Squared world-xy speed throughout the maneuver; positive cost."""
+    """Phase-aligned planar speed: planted head during yaw, root otherwise."""
     asset: Entity = env.scene[asset_cfg.name]
     _update_head_spin_state(env, asset, direction=direction)
-    return head_spin_planar_motion_cost_from_components(
-        asset.data.root_link_lin_vel_w[:, :2],
+    return head_spin_phase_planar_motion_cost_from_components(
+        root_planar_velocity=asset.data.root_link_lin_vel_w[:, :2],
+        head_planar_velocity=asset.data.body_com_lin_vel_w[
+            :, head_asset_cfg.body_ids[0], :2
+        ],
         supported=_head_spin_valid_support(env, asset),
         complete=_head_spin_complete(env, target_angle),
         supported_scale=supported_scale,
