@@ -97,6 +97,7 @@ def _summarize(records: list[dict[str, float | bool]]) -> dict[str, float | int]
         "entry_planar_drift_m",
         "turn_planar_drift_m",
         "final_planar_drift_m",
+        "supported_head_drift_m",
     )
     if records and all(key in records[0] for key in drift_keys):
         summary.update(
@@ -141,10 +142,15 @@ def _evaluate_scenario(
     base.reset(env_ids=all_ids)
     observations = env.get_observations()
     asset = base.scene["robot"]
+    jaw_body_id = asset.body_names.index("jaw_soft")
     start_xy = asset.data.root_link_pos_w[:, :2].clone()
     max_drift = torch.zeros(base.num_envs, device=base.device)
     entry_drift = torch.full((base.num_envs,), torch.nan, device=base.device)
     turn_drift = torch.full((base.num_envs,), torch.nan, device=base.device)
+    support_head_anchor = torch.full(
+        (base.num_envs, 2), torch.nan, device=base.device
+    )
+    max_support_head_drift = torch.zeros(base.num_envs, device=base.device)
     peak_yaw_rate = torch.zeros(base.num_envs, device=base.device)
     criterion_keys = (
         "height_criterion",
@@ -180,6 +186,18 @@ def _evaluate_scenario(
         turn_complete = base._head_spin_max >= TARGET_ANGLE
         new_turn = turn_complete & torch.isnan(turn_drift)
         turn_drift[new_turn] = displacement[new_turn]
+        valid_support = microduck_mdp._head_spin_valid_support(base, asset)
+        head_xy = asset.data.body_pos_w[:, jaw_body_id, :2]
+        new_support = valid_support & torch.isnan(support_head_anchor[:, 0])
+        support_head_anchor[new_support] = head_xy[new_support]
+        support_head_displacement = torch.linalg.vector_norm(
+            head_xy - torch.nan_to_num(support_head_anchor, nan=0.0), dim=1
+        )
+        max_support_head_drift = torch.where(
+            valid_support,
+            torch.maximum(max_support_head_drift, support_head_displacement),
+            max_support_head_drift,
+        )
         peak_yaw_rate = torch.maximum(
             peak_yaw_rate, asset.data.root_link_ang_vel_w[:, 2].abs()
         )
@@ -263,6 +281,9 @@ def _evaluate_scenario(
                     ).item()
                 ),
                 "final_planar_drift_m": float(displacement[env_id].item()),
+                "supported_head_drift_m": float(
+                    max_support_head_drift[env_id].item()
+                ),
                 "peak_abs_yaw_rate_rad_s": float(peak_yaw_rate[env_id].item()),
                 "best_stable_hold_s": float(best_stable_steps[env_id].item())
                 * base.step_dt,
@@ -278,6 +299,8 @@ def _evaluate_scenario(
         max_drift[done_ids] = 0.0
         entry_drift[done_ids] = torch.nan
         turn_drift[done_ids] = torch.nan
+        support_head_anchor[done_ids] = torch.nan
+        max_support_head_drift[done_ids] = 0.0
         peak_yaw_rate[done_ids] = 0.0
         for value in ever.values():
             value[done_ids] = False

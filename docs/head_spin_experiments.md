@@ -40,7 +40,9 @@ claims about the current policy.
 | `headspin-rv6-seed42-support-compact` | `6a92157645686a1580c1312f` | Checkpoint-1498 supported-spin compactness | Completed at checkpoint 1747 | <= $0.20 |
 | `headspin-rv6b-seed42-support-compact` | `6a9219f4984507d9db4eaa9c` | Unchanged checkpoint-1747 continuation | Completed at checkpoint 1996 | <= $0.20 |
 | `headspin-rv7-seed42-strong-compact` | `6a921ecd45686a1580c132b6` | Checkpoint-1996 8x compactness | Completed at checkpoint 2245 | <= $0.20 |
-| **Completed/canceled cumulative estimate** | | | | **$2.35** |
+| `headspin-rv8-smoke-direct-drift` | `6a922473984507d9db4eab8a` | Direct-displacement integration smoke | Canceled after finite reward verification | <= $0.05 |
+| `headspin-rv8-seed42-direct-drift` | `6a922576984507d9db4eaba9` | Checkpoint-2245 direct displacement shaping | Completed at checkpoint 2494 | <= $0.20 |
+| **Completed/canceled cumulative estimate** | | | | **$2.60** |
 
 ## Experiment 0: pipeline smoke
 
@@ -249,3 +251,21 @@ the whole trajectory. This experiment tests direct objective alignment after
 the velocity-proxy dose response flattened. Promote only if standing success
 remains 100% and p95 maximum drift improves materially; checkpoint 2245 and the
 earlier checkpoint 1249 remain immutable fallbacks.
+
+The 64-environment smoke loaded checkpoint 2245 and exercised both new terms
+with finite values and zero NaN terminations. It was canceled immediately after
+verification. The full 2,048-environment job then trained 250 updates from the
+same clean fallback and completed normally at checkpoint 2494.
+
+Checkpoint 2494 again achieved 100% strict success in all five official
+256-episode buckets. Standing p95 maximum drift improved only from 0.230 m to
+0.222 m; turn-completion drift improved from 0.166 m to 0.153 m and final drift
+from 0.224 m to 0.220 m. This is a smaller gain than needed and rejects further
+dose increases of the same whole-root proxy without first fixing the metric.
+
+The maximum-drift metric follows the trunk root through a maneuver that must
+rotate the trunk around a ground-planted head, so it mixes necessary kinematic
+excursion with undesirable pivot sliding. Before further reward changes,
+instrument the `jaw_soft` head body's displacement during valid head-only
+support. Compactness should mean a planted head pivot plus a final stand near
+the starting position, rather than an immobile trunk throughout inversion.
