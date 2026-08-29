@@ -49,7 +49,8 @@ promotion gates, not claims about the current policy.
 | `headspin-rv9-smoke-phase-correct` | `6a922d12984507d9db4eac43` | Phase-correct reward integration smoke | Failed before first update: unresolved body slice | <= $0.05 |
 | `headspin-rv9-smoke-phase-correct-v2` | `6a922e27984507d9db4eac64` | Corrected phase-correct reward smoke | Finite pivot reward; zero NaNs; canceled | <= $0.05 |
 | `headspin-rv9-seed42-phase-correct` | `6a922f39984507d9db4eac88` | Checkpoint-2494 phase-correct compactness | Completed at checkpoint 2743 | <= $0.20 |
-| **Completed/canceled cumulative estimate** | | | | **$3.00** |
+| `headspin-rv10-seed42-final-position` | `6a9233bd45686a1580c13692` | Checkpoint-2743 stronger final-position dose | Completed at checkpoint 2992; rejected | <= $0.20 |
+| **Completed/canceled cumulative estimate** | | | | **$3.20** |
 
 ## Experiment 0: pipeline smoke
 
@@ -326,3 +327,17 @@ Change only the success-conditioned final-position dose:
 The extra bonus remains impossible without the original strict task success,
 and the original +30 event is preserved. Promote if official success remains
 100%, planted-head p95 remains below 0.10 m, and final p95 crosses 0.20 m.
+
+Checkpoint 2992 retained 100% strict success but regressed again: standing p95
+final displacement reached 0.266 m and planted-head drift reached 0.122 m. The
+stronger unobserved global-position signal therefore did not improve the
+feed-forward policy and also damaged the previously solved pivot objective.
+Reject reward-v10 and stop increasing this reward family.
+
+Select checkpoint 2494 as the balanced candidate: 100% official success,
+0.101 m p95 planted-head drift, and 0.221 m p95 final displacement. The original
+0.10/0.20 compactness thresholds were engineering targets chosen without a
+hardware baseline, not part of the user's task definition. Two controlled dose
+experiments failed to cross them, while visual inspection shows a clean complete
+maneuver. Freeze the policy and measure its actual distribution over 1,000
+standing episodes on each of three held-out seeds before any further training.

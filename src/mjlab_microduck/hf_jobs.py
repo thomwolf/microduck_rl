@@ -172,9 +172,17 @@ if [ "$TRAIN_RC" -eq 0 ] && [ -n "$CKPT" ] && [[ "$TASK_ID" == *HeadSpin* ]]; th
     EVAL_DIR="$(dirname "$CKPT")/eval"
     mkdir -p "$EVAL_DIR"
     echo "[bootstrap] evaluating $(basename "$CKPT")"
+    EVAL_SCENARIO_ARGS=()
+    if [ -n "${HEAD_SPIN_EVAL_SCENARIOS:-}" ]; then
+        IFS=',' read -r -a EVAL_SCENARIOS <<< "$HEAD_SPIN_EVAL_SCENARIOS"
+        EVAL_SCENARIO_ARGS=(--scenarios "${EVAL_SCENARIOS[@]}")
+    fi
     uv run python scripts/eval_head_spin.py \
         --task "$TASK_ID" --checkpoint-file "$CKPT" \
-        --num-envs 256 --episodes-per-scenario 256 \
+        --num-envs 256 \
+        --episodes-per-scenario "${HEAD_SPIN_EVAL_EPISODES:-256}" \
+        --seed "${HEAD_SPIN_EVAL_SEED:-20260828}" \
+        "${EVAL_SCENARIO_ARGS[@]}" \
         --output "$EVAL_DIR/head_spin_eval.json" \
     || echo "[bootstrap] head-spin evaluation failed (training still OK)"
     set -e
@@ -419,6 +427,23 @@ def submit(argv: list[str]) -> int:
         action="store_true",
         help="Disable W&B logging and do not forward an API key.",
     )
+    ap.add_argument(
+        "--head-spin-eval-seed",
+        type=int,
+        default=20260828,
+        help="Deterministic seed for the automatic head-spin evaluation.",
+    )
+    ap.add_argument(
+        "--head-spin-eval-episodes",
+        type=int,
+        default=256,
+        help="Episodes per selected head-spin evaluation scenario.",
+    )
+    ap.add_argument(
+        "--head-spin-eval-scenarios",
+        default="",
+        help="Comma-separated head-spin scenarios; empty evaluates all five.",
+    )
     args, train_args = ap.parse_known_args(argv)
 
     api = HfApi()
@@ -443,6 +468,9 @@ def submit(argv: list[str]) -> int:
     env: dict[str, str] = {
         "CKPT_REPO": ckpt_repo,
         "TRAIN_ARGS": " ".join(shlex.quote(a) for a in [args.task, *train_args]),
+        "HEAD_SPIN_EVAL_SEED": str(args.head_spin_eval_seed),
+        "HEAD_SPIN_EVAL_EPISODES": str(args.head_spin_eval_episodes),
+        "HEAD_SPIN_EVAL_SCENARIOS": args.head_spin_eval_scenarios,
     }
     resume_values = (args.resume_repo, args.resume_file, args.resume_experiment)
     if any(resume_values) and not all(resume_values):
