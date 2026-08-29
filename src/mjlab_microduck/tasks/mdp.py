@@ -7275,6 +7275,13 @@ def _head_spin_state(
         env._head_spin_success_paid = torch.zeros(
             env.num_envs, dtype=torch.bool, device=env.device
         )
+        env._head_spin_compact_success_paid = torch.zeros(
+            env.num_envs, dtype=torch.bool, device=env.device
+        )
+        env._head_spin_start_xy = torch.zeros(
+            (env.num_envs, 2), device=env.device
+        )
+        env._head_spin_max_planar_drift = zeros.clone()
         env._head_spin_last_update_step = -1
         env._head_spin_stability_last_update_step = -1
     return env._head_spin_accum, env._head_spin_max, env._head_spin_paid
@@ -7565,6 +7572,9 @@ def reset_head_spin_state(
     env._head_spin_recovery_potential_ready[env_ids] = False
     env._head_spin_stable_steps[env_ids] = 0
     env._head_spin_success_paid[env_ids] = False
+    env._head_spin_compact_success_paid[env_ids] = False
+    env._head_spin_start_xy[env_ids] = env.sim.data.qpos[env_ids, :2]
+    env._head_spin_max_planar_drift[env_ids] = 0.0
 
 
 def head_spin_stage_observation(
@@ -7749,6 +7759,45 @@ def head_spin_stable_success_bonus(
     due = success & ~env._head_spin_success_paid
     env._head_spin_success_paid |= due
     return due.float() / env.step_dt
+
+
+def head_spin_compactness_score_from_drift(
+    max_planar_drift: torch.Tensor,
+    drift_scale: float = 0.15,
+) -> torch.Tensor:
+    """Smooth score for keeping the entire maneuver near its starting point."""
+    drift = torch.nan_to_num(
+        max_planar_drift, nan=1e3, posinf=1e3, neginf=1e3
+    ).clamp_min(0.0)
+    return torch.exp(-((drift / max(float(drift_scale), 1e-6)) ** 2))
+
+
+def head_spin_compact_success_bonus(
+    env: ManagerBasedRlEnv,
+    target_angle: float = math.pi,
+    direction: float = 1.0,
+    hold_s: float = _HEAD_SPIN_SUCCESS_HOLD_S,
+    drift_scale: float = 0.15,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """One-shot strict-success bonus graded by maximum planar displacement."""
+    asset: Entity = env.scene[asset_cfg.name]
+    success = _head_spin_stable_success(
+        env, asset, target_angle, direction, hold_s
+    )
+    displacement = (
+        asset.data.root_link_pos_w[:, :2] - env._head_spin_start_xy
+    ).norm(dim=1)
+    env._head_spin_max_planar_drift = torch.maximum(
+        env._head_spin_max_planar_drift,
+        torch.nan_to_num(displacement, nan=1e3, posinf=1e3, neginf=1e3),
+    )
+    due = success & ~env._head_spin_compact_success_paid
+    env._head_spin_compact_success_paid |= due
+    score = head_spin_compactness_score_from_drift(
+        env._head_spin_max_planar_drift, drift_scale=drift_scale
+    )
+    return due.float() * score / env.step_dt
 
 
 def head_spin_stable_success_termination(
@@ -8003,6 +8052,23 @@ def head_spin_planar_motion_cost_from_components(
         1.0 + (float(supported_scale) - 1.0) * supported.float(),
     )
     return velocity.pow(2).sum(dim=1) * phase_scale
+
+
+def head_spin_planar_displacement_penalty(
+    env: ManagerBasedRlEnv,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Squared world-xy displacement from this episode's reset position."""
+    asset: Entity = env.scene[asset_cfg.name]
+    displacement = asset.data.root_link_pos_w[:, :2] - env._head_spin_start_xy
+    displacement = torch.nan_to_num(
+        displacement, nan=1e3, posinf=1e3, neginf=-1e3
+    )
+    radial_drift = displacement.norm(dim=1)
+    env._head_spin_max_planar_drift = torch.maximum(
+        env._head_spin_max_planar_drift, radial_drift
+    )
+    return displacement.pow(2).sum(dim=1)
 
 
 def head_spin_planar_drift_penalty(

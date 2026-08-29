@@ -107,6 +107,14 @@ def test_compactness_cost_applies_in_every_phase_and_is_stronger_after_turn():
     assert torch.allclose(cost, torch.tensor([0.25, 1.0, 1.0]))
 
 
+def test_compactness_score_directly_tracks_maximum_drift():
+    drift = torch.tensor([0.0, 0.15, 0.30, float("nan")])
+    score = mdp.head_spin_compactness_score_from_drift(drift, drift_scale=0.15)
+    expected = torch.tensor([1.0, math.exp(-1.0), math.exp(-4.0)])
+    assert torch.allclose(score[:3], expected)
+    assert score[3] == 0.0
+
+
 def test_cfg_polish_scales_match_strict_stability_thresholds():
     cfg = make_microduck_head_spin_env_cfg()
     stability = cfg.rewards["head_spin_stability_score"]
@@ -115,6 +123,10 @@ def test_cfg_polish_scales_match_strict_stability_thresholds():
     assert stability.params["angular_speed_scale"] == 1.0
     assert drift.params["supported_scale"] == 8.0
     assert drift.params["post_turn_scale"] == 8.0
+    assert cfg.rewards["head_spin_planar_displacement"].weight == -20.0
+    compact = cfg.rewards["head_spin_compact_success"]
+    assert compact.weight == 15.0
+    assert compact.params["drift_scale"] == 0.15
 
 
 def test_hard_completion_gate_does_not_leak_before_pi():

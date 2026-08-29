@@ -104,6 +104,16 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
             "hold_s": HEAD_SPIN_SUCCESS_HOLD_S,
         },
     )
+    cfg.rewards["head_spin_compact_success"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_compact_success_bonus,
+        weight=15.0,
+        params={
+            "target_angle": HEAD_SPIN_TARGET_ANGLE,
+            "direction": HEAD_SPIN_DIRECTION,
+            "hold_s": HEAD_SPIN_SUCCESS_HOLD_S,
+            "drift_scale": 0.15,
+        },
+    )
     cfg.rewards["head_spin_turn_brake"] = RewardTermCfg(
         func=microduck_mdp.head_spin_turn_brake_penalty,
         weight=-0.25,
@@ -132,6 +142,10 @@ def make_microduck_head_spin_env_cfg(play: bool = False):
             "supported_scale": 8.0,
             "post_turn_scale": 8.0,
         },
+    )
+    cfg.rewards["head_spin_planar_displacement"] = RewardTermCfg(
+        func=microduck_mdp.head_spin_planar_displacement_penalty,
+        weight=-20.0,
     )
 
     # Yaw is the task, so the 3D angular-momentum regularizer must not oppose
