@@ -42,7 +42,8 @@ claims about the current policy.
 | `headspin-rv7-seed42-strong-compact` | `6a921ecd45686a1580c132b6` | Checkpoint-1996 8x compactness | Completed at checkpoint 2245 | <= $0.20 |
 | `headspin-rv8-smoke-direct-drift` | `6a922473984507d9db4eab8a` | Direct-displacement integration smoke | Canceled after finite reward verification | <= $0.05 |
 | `headspin-rv8-seed42-direct-drift` | `6a922576984507d9db4eaba9` | Checkpoint-2245 direct displacement shaping | Completed at checkpoint 2494 | <= $0.20 |
-| **Completed/canceled cumulative estimate** | | | | **$2.60** |
+| `headspin-rv8-pivot-diagnostic` | `6a922a4045686a1580c134bf` | Evaluation-only head-pivot instrumentation | Evaluator API mismatch; no training | <= $0.05 |
+| **Completed/canceled cumulative estimate** | | | | **$2.65** |
 
 ## Experiment 0: pipeline smoke
 

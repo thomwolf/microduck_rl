@@ -187,7 +187,10 @@ def _evaluate_scenario(
         new_turn = turn_complete & torch.isnan(turn_drift)
         turn_drift[new_turn] = displacement[new_turn]
         valid_support = microduck_mdp._head_spin_valid_support(base, asset)
-        head_xy = asset.data.body_pos_w[:, jaw_body_id, :2]
+        # EntityData exposes per-body centers of mass rather than raw body-frame
+        # origins.  jaw_soft carries every head collision geom, so its COM is a
+        # stable proxy for whether the planted head assembly translates.
+        head_xy = asset.data.body_com_pos_w[:, jaw_body_id, :2]
         new_support = valid_support & torch.isnan(support_head_anchor[:, 0])
         support_head_anchor[new_support] = head_xy[new_support]
         support_head_displacement = torch.linalg.vector_norm(
